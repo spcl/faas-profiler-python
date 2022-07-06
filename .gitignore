@@ -127,3 +127,16 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# visual code
+.vscode/
+
+# macOS files
+.DS_STORE
+
+# serverless files
+.serverless
+
+# Node files
+node_modules
+package-lock.json
