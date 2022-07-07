@@ -22,4 +22,4 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.testing.txt
     - name: Run tests
-      run: pytest tests/test*
+      run: pytest tests/**
