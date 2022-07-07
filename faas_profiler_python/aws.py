@@ -8,7 +8,7 @@ from collections import namedtuple
 import logging
 
 from enum import Enum
-from typing import Type
+from typing import Any, Type
 
 from faas_profiler_python.utilis import lowercase_keys, get_idx_safely
 from faas_profiler_python.tracer import (
@@ -255,5 +255,37 @@ class AWSEvent:
 
 class AWSContext:
 
+    # https://docs.aws.amazon.com/lambda/latest/dg/python-context.html
+
+    _logger = logging.getLogger("AWSContext")
+    _logger.setLevel(logging.INFO)
+
     def __init__(self, context_data) -> None:
-        self.context_data = context_data
+        self.data = context_data
+
+    @property
+    def client_context(self) -> Any:
+        return getattr(self.data, "client_context", None)
+
+    @property
+    def custom_context(self) -> dict:
+        if self.client_context is None:
+            return {}
+
+        client_ctx = getattr(self.client_context, "custom", {})
+        if not isinstance(client_ctx, dict):
+            self._logger.error(
+                f"Custom client context is not a dict, got {type(client_ctx)}. Cannot parse custom client context.")
+            return {}
+
+        return client_ctx
+
+    def extract_trace_context(self) -> Type[TraceContext]:
+        """
+        Extracts Trace context from AWS Lambda Context object.
+        """
+        context = self.custom_context.get(TRACE_CONTEXT_KEY, {})
+        return TraceContext(
+            profile_id=context.get(PROFILE_ID_HEADER),
+            root_id=context.get(ROOT_ID_HEADER),
+            span_id=context.get(SPAN_ID_HEADER))

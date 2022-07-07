@@ -11,7 +11,7 @@ PROFILE_ID_HEADER = "FaaS-Profiler-Profile-ID"
 ROOT_ID_HEADER = "FaaS-Profiler-Root-ID"
 SPAN_ID_HEADER = "FaaS-Profiler-Span-ID"
 
-TRACE_CONTEXT_KEY = "faas_profiler_context"
+TRACE_CONTEXT_KEY = "_faas_profiler_context"
 
 
 @dataclass
