@@ -10,13 +10,13 @@ import traceback
 from typing import List, Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
-from time import time
 
 from faas_profiler_python.captures.base import Capture
 from faas_profiler_python.measurements import MeasurementProcess, MeasurementGroup
-from faas_profiler_python.config import Config, ProfileContext, MeasuringState
+from faas_profiler_python.config import Config, ProfileContext, MeasuringState, Provider
 from faas_profiler_python.exporter import ResultsCollector, Exporter
 from faas_profiler_python.patchers import unpatch_modules
+from faas_profiler_python.payload import Payload
 
 
 def profile(config_file: str = None):
@@ -48,10 +48,14 @@ class Profiler:
     _logger.setLevel(logging.INFO)
 
     def __init__(self, config_file: str = None) -> None:
-        self.profiler_setup_start = time()
-
         self._logger.info(f"Load configuration: {config_file}")
         self.config = Config.load_from_file(config_file)
+
+        # Determine Cloud Provider: TODO: Make this dynamic
+        self.cloud_provider = Provider.AWS
+
+        # Payload
+        self.payload: Type[Payload] = None
 
         # Profiler Context
         self.profile_context = ProfileContext()
@@ -64,8 +68,6 @@ class Profiler:
         self._periodic_measurements_started: bool = False
 
         self._make_measurement_groups()
-
-        print(self.default_measurements.measurements)
 
         # Captures
         self.active_captures: List[Type[Capture]] = []
@@ -82,44 +84,47 @@ class Profiler:
             f"- Exporters: {self.config.exporters}"
         ))
 
-    def __call__(self, func: Type[Callable], event, context, **kwargs) -> Any:
+    def __call__(self, func: Type[Callable], *args, **kwargs) -> Any:
         """
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        self.profile_context.handle_function_args(event, context)
-        self.profile_context.set_function_name(func)
-
-        self.start()
+        self._start(payload=(args, kwargs))
         self._logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
         try:
-            func_ret = func(event, context, **kwargs)
+            func_ret = func(*args, **kwargs)
         except Exception as ex:
             self._logger.error(f"Function not successfully executed: {ex}")
 
             func_ret = None
         finally:
-            self._logger.info(f"-- FUNCTION EXCUTED --")
-            self.stop()
+            self._logger.info("-- FUNCTION EXCUTED --")
+            self._stop(payload=(args, kwargs), func_return=func_ret)
 
         self.export()
 
         return func_ret
 
-    def start(self):
+    def _start(self, payload: tuple) -> None:
         """
         Starts the profiling.
+
+        Internal use only. Use __call__ to start a new profile run.
         """
         self._logger.info("Profiler run started.")
-        self.profile_context.set_base_information()
+
+        self.payload = Payload.factory(self.cloud_provider)(
+            *payload[0], **payload[1])
 
         self._start_capturing_and_tracing()
         self._start_default_measurements()
         self._start_periodic_measurements()
 
-    def stop(self):
+    def _stop(self, payload: tuple, func_return: Any) -> None:
         """
         Stops the profiling.
+
+        Internal use only. Use __call__ to stop a new profile run.
         """
         self._logger.info("Profile run stopped.")
         self._stop_periodic_measurements()
@@ -150,13 +155,14 @@ class Profiler:
                 self._logger.error(
                     f"No exporter found with name {config_item.name}")
                 continue
-            
+
             try:
                 exporter(
                     self.profile_context,
                     config_item.parameters).dump(results_collector)
             except Exception as err:
-                self._logger.error(f"Exporting results with {config_item.name} failed: {err}")
+                self._logger.error(
+                    f"Exporting results with {config_item.name} failed: {err}")
 
     # Private methods
 

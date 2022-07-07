@@ -4,10 +4,10 @@
 Module of all measurements for python client.
 """
 
-from .base import *
-from .common import *
-from .network import *
-from .memory import *
-from .cpu import *
-from .information import *
-from .disk import *
+from .base import * # noqa
+from .common import * # noqa
+from .network import * # noqa
+from .memory import * # noqa
+from .cpu import * # noqa
+from .information import * # noqa
+from .disk import * # noqa

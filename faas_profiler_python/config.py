@@ -9,7 +9,6 @@ import logging
 import pkg_resources
 import yaml
 import inspect
-from datetime import datetime
 
 from os import getpid, mkdir, environ
 from os.path import dirname, join, abspath, exists
@@ -72,9 +71,9 @@ class Config:
                             f"Profiler configuration {config_file} must be a dict, but got {type(config)}")
                     except yaml.YAMLError as err:
                         cls._logger.error(
-                            "Could not parse profiler config file: {err}")
+                            f"Could not parse profiler config file: {err}")
             except IOError as err:
-                cls._logger.error("Could not open profiler config file: {err}")
+                cls._logger.error(f"Could not open profiler config file: {err}")
 
         return Config()
 

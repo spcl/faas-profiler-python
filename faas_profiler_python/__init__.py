@@ -4,9 +4,9 @@
 FaaS-Profiler for python package
 """
 
-from .measurements import *
-from .profiler import *
-from .config import *
+from .measurements import * # noqa
+from .profiler import * # noqa
+from .config import * # noqa
 import logging
 import sys
 

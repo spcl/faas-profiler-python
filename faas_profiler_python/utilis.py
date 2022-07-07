@@ -16,6 +16,10 @@ def get_arg_by_key_or_pos(args, kwargs, pos, kw):
             return None
 
 
+def lowercase_keys(dict: dict) -> dict:
+    return {k.lower(): v for k, v in dict.items()}
+
+
 def registerable_name_parts(name, delimiter: str = "::") -> tuple:
     return tuple(underscore(part) for part in name.split(delimiter))
 
@@ -37,9 +41,10 @@ class Registerable:
         def decorator(subclass):
             cls._names_[name] = subclass
             subclass.name = name
-            subclass.name_parts = registerable_name_parts(
-                name, module_delimiter)
-            subclass.key = registerable_key(name, module_delimiter)
+            if module_delimiter:
+                subclass.name_parts = registerable_name_parts(
+                    name, module_delimiter)
+                subclass.key = registerable_key(name, module_delimiter)
 
             return subclass
         return decorator

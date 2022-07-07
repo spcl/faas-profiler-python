@@ -12,7 +12,6 @@ import os
 import pkg_resources
 import logging
 import psutil
-import re
 
 from typing import Type
 from datetime import datetime

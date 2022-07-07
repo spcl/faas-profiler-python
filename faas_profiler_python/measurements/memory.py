@@ -5,7 +5,6 @@ Module for memory measurements:
 - Usage
 """
 
-from functools import reduce
 import logging
 import psutil
 
@@ -80,7 +79,7 @@ class Usage(PeriodicMeasurement):
                             memory += child_memory_info.rss
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
-            
+
             return memory
         except psutil.AccessDenied as e:
             self._logger.error(

@@ -12,9 +12,9 @@ from abc import ABC, abstractmethod
 from typing import Type
 from functools import partial
 
-from faas_profiler_python.aws import AWSContext, AWSEvent
 from faas_profiler_python.config import Provider
 from faas_profiler_python.utilis import Registerable
+from faas_profiler_python.tracer import TraceContext
 
 
 class Payload(Registerable, ABC):
@@ -26,7 +26,7 @@ class Payload(Registerable, ABC):
     _logger.setLevel(logging.INFO)
 
     @abstractmethod
-    def extract_tracing_context(self):
+    def extract_tracing_context(self) -> Type[TraceContext]:
         pass
 
 
@@ -42,88 +42,16 @@ class AWSPayload(Payload):
     def __init__(
         self,
         event: dict,
-        context: Type["LambdaContext"]
+        context
     ) -> None:
         self.event_data = event
         self.context_data = context
 
-        self.event = AWSEvent(self.event_data)
-        self.context = AWSContext(self.context_data)
+        # self.event = AWSEvent(self.event_data)
+        # self.context = AWSContext(self.context_data)
 
-    def extract_tracing_context(self):
+    def extract_tracing_context(self) -> Type[TraceContext]:
         return super().extract_tracing_context()
-
-
-# class AWSEvent:
-
-#     # https://docs.aws.amazon.com/whitepapers/latest/security-overview-aws-lambda/lambda-event-sources.html
-
-#     UNIDENTIFIED = 'unidentified'
-#     API_GATEWAY_AWS_PROXY = 'api_gateway_aws_proxy'
-#     API_GATEWAY_HTTP = 'api_gateway_http'
-#     S3 = 'S3'
-#     SNS = 'sns'
-#     DYNAMO_DB = 'dynamo_db'
-#     CLOUDFRONT = 'cloudfront'
-#     SCHEDULED_EVENT = 'scheduled_event'
-#     CLOUD_WATCH_LOGS = 'cloud_watch_logs'
-#     API_GATEWAY_AUTHORIZER = 'api_gateway_authorizer'
-#     AWS_CONFIG = 'aws_config'
-#     CLOUD_FORMATION = 'cloud_formation'
-#     CODE_COMMIT = 'code_commit'
-#     SES = 'ses'
-#     KINESIS = 'kinesis'
-#     KINESIS_FIREHORSE = 'kinesis_firehose'
-#     COGNITO_SYNC_TRIGGER = 'cognito_sync_trigger'
-#     MOBILE_BACKEND = 'is_mobile_backend'
-
-#     def __init__(self, event: dict = {}) -> None:
-#         self.event = event
-#         self.event_type = self._get_event_type()
-#         self.size = getsizeof(event)
-
-#     def _get_event_type(self):
-#         if not self.event:
-#             return self.UNIDENTIFIED
-
-#         if 'pathParameters' in self.event and 'proxy' in self.event['pathParameters']:
-#             return self.API_GATEWAY_AWS_PROXY
-#         if 'requestContext' in self.event and 'resourceId' in self.event['requestContext']:
-#             return self.API_GATEWAY_HTTP
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'eventSource' in self.event['Records'][0] and self.event['Records'][0]['eventSource'] == 'aws:s3':
-#             return self.S3
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'EventSource' in self.event['Records'][0] and self.event['Records'][0]['EventSource'] == 'aws:sns':
-#             return self.SNS
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'eventSource' in self.event['Records'][0] and self.event['Records'][0]['eventSource'] == 'aws:dynamodb':
-#             return self.DYNAMO_DB
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'cf' in self.event['Records'][0]:
-#             return self.CLOUDFRONT
-#         elif 'source' in self.event and self.event['source'] == 'aws.events':
-#             return self.SCHEDULED_EVENT
-#         elif 'awslogs' in self.event and 'data' in self.event['awslogs']:
-#             return self.CLOUD_WATCH_LOGS
-#         elif 'authorizationToken' in self.event and self.event['authorizationToken'] == "incoming-client-token":
-#             return self.API_GATEWAY_AUTHORIZER
-#         elif 'configRuleId' in self.event and 'configRuleName' in self.event and 'configRuleArn' in self.event:
-#             return self.AWS_CONFIG
-#         elif 'StackId' in self.event and 'RequestType' in self.event and 'ResourceType' in self.event:
-#             return self.CLOUD_FORMATION
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'eventSource' in self.event['Records'][0] and self.event['Records'][0]['eventSource'] == 'aws:codecommit':
-#             return self.CODE_COMMIT
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'eventSource' in self.event['Records'][0] and self.event['Records'][0]['eventSource'] == 'aws:ses':
-#             return self.SES
-#         elif 'Records' in self.event and len(self.event['Records']) > 0 and 'eventSource' in self.event['Records'][0] and self.event['Records'][0]['eventSource'] == 'aws:kinesis':
-#             return self.KINESIS
-#         elif 'records' in self.event and len(self.event['Records']) > 0 and 'approximateArrivalTimestamp' in self.event['records'][0]:
-#             return self.KINESIS_FIREHORSE
-#         elif 'records' in self.event and len(self.event['Records']) > 0 and 'deliveryStreamArn' in self.event and self.event['deliveryStreamArn'] is str and self.event['deliveryStreamArn'].startswith('arn:aws:kinesis:'):
-#             return self.KINESIS_FIREHORSE
-#         elif 'eventType' in self.event and self.event['eventType'] == 'SyncTrigger' and 'identityId' in self.event and 'identityPoolId' in self.event:
-#             return self.COGNITO_SYNC_TRIGGER
-#         elif 'operation' in self.event and 'message' in self.event:
-#             return self.MOBILE_BACKEND
-
-#         return self.UNIDENTIFIED
 
 
 # class AWSContext:
@@ -155,11 +83,3 @@ class AWSPayload(Payload):
 #             "invoked_function_arn": self.invoked_function_arn,
 #             "client_context": self.client_context,
 #         }
-
-
-# def parse_function_payload(event, context):
-#     # TODO: make cloud case dest.
-#     return (
-#         AWSEvent(event),
-#         AWSContext(context)
-#     )

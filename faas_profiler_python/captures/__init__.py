@@ -4,4 +4,4 @@
 Package for invocation capturing.
 """
 
-from .aws import *
+from .aws import * # noqa
