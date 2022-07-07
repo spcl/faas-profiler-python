@@ -11,7 +11,13 @@ from enum import Enum
 from typing import Type
 
 from faas_profiler_python.utilis import lowercase_keys, get_idx_safely
-from faas_profiler_python.tracer import TraceContext
+from faas_profiler_python.tracer import (
+    TraceContext,
+    PROFILE_ID_HEADER,
+    ROOT_ID_HEADER,
+    SPAN_ID_HEADER,
+    TRACE_CONTEXT_KEY
+)
 
 ARN = namedtuple(
     "ARN",
@@ -82,8 +88,12 @@ class AWSEvent:
         self.data = lowercase_keys(event_data)
         self.type = self.resolve_event_type()
 
-    def extract_trace_context(self) -> Type[TraceContext]:
-        pass
+    @property
+    def is_http_event(self) -> bool:
+        """
+        Returns True if event data has a http headers key.
+        """
+        return "headers" in self.data
 
     def resolve_event_type(self) -> EventTypes:
         """
@@ -99,6 +109,44 @@ class AWSEvent:
                 resolved_type = event_type
 
         return resolved_type
+
+    def extract_trace_context(self) -> Type[TraceContext]:
+        if self.is_http_event:
+            return self._http_tracing_context()
+        if self.type == EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
+            return self._scheduled_event_context()
+
+        # Default case: Return empty trace context
+        return TraceContext()
+
+    def _http_tracing_context(self) -> Type[TraceContext]:
+        """
+        Extracts the tracing context from http headers.
+        """
+        headers = lowercase_keys(self.data.get("headers", {}))
+        return TraceContext(
+            profile_id=headers.get(PROFILE_ID_HEADER),
+            root_id=headers.get(ROOT_ID_HEADER),
+            span_id=headers.get(SPAN_ID_HEADER))
+
+    def _sns_tracing_context(self) -> Type[TraceContext]:
+        # TODO
+        pass
+
+    def _sqs_tracing_context(self) -> Type[TraceContext]:
+        # TODO
+        pass
+
+    def _scheduled_event_context(self) -> Type[TraceContext]:
+        """
+        Extracts the tracing context from detail values.
+        """
+        detail = lowercase_keys(self.data.get("detail", {}))
+        context = detail.get(TRACE_CONTEXT_KEY, {})
+        return TraceContext(
+            profile_id=context.get(PROFILE_ID_HEADER),
+            root_id=context.get(ROOT_ID_HEADER),
+            span_id=context.get(SPAN_ID_HEADER))
 
     # Helpers
 

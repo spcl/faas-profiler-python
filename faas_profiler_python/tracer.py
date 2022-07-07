@@ -6,13 +6,26 @@ Distributed tracer module.
 
 from dataclasses import dataclass
 
+# https://specs.openstack.org/openstack/api-wg/guidelines/headers.html
+PROFILE_ID_HEADER = "FaaS-Profiler-Profile-ID"
+ROOT_ID_HEADER = "FaaS-Profiler-Root-ID"
+SPAN_ID_HEADER = "FaaS-Profiler-Span-ID"
+
+TRACE_CONTEXT_KEY = "faas_profiler_context"
+
 
 @dataclass
 class TraceContext:
-    trace_id: int
-    parent_id: int
-    current_id: int
+    profile_id: str = None
+    root_id: str = None
+    span_id: str = None
 
     @property
     def is_complete(self) -> bool:
-        return True
+        """
+        Returns True if trace context is complete
+        """
+        return (
+            self.profile_id is not None and
+            self.root_id is not None and
+            self.span_id is not None)
