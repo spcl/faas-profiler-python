@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
-from typing import Dict
+from typing import Any, Dict
 from inflection import underscore
 
 
@@ -18,6 +18,13 @@ def get_arg_by_key_or_pos(args, kwargs, pos, kw):
 
 def lowercase_keys(dict: dict) -> dict:
     return {k.lower(): v for k, v in dict.items()}
+
+
+def get_idx_safely(arr: list, idx: int, default: Any = None) -> Any:
+    try:
+        return arr[idx]
+    except IndexError:
+        return default
 
 
 def registerable_name_parts(name, delimiter: str = "::") -> tuple:

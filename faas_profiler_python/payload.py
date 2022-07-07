@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Type
 from functools import partial
 
+from faas_profiler_python.aws import AWSContext, AWSEvent
 from faas_profiler_python.config import Provider
 from faas_profiler_python.utilis import Registerable
 from faas_profiler_python.tracer import TraceContext
@@ -47,8 +48,8 @@ class AWSPayload(Payload):
         self.event_data = event
         self.context_data = context
 
-        # self.event = AWSEvent(self.event_data)
-        # self.context = AWSContext(self.context_data)
+        self.event = AWSEvent(self.event_data)
+        self.context = AWSContext(self.context_data)
 
     def extract_tracing_context(self) -> Type[TraceContext]:
         return super().extract_tracing_context()
