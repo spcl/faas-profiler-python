@@ -21,8 +21,6 @@ from typing import Any, List, Type
 from functools import reduce, cached_property
 from collections import namedtuple
 
-from faas_profiler_python.payload import parse_function_payload
-
 ROOT_DIR = abspath(dirname(__file__))
 SHARED_DIR = join(dirname(ROOT_DIR), "shared")
 SCHEMAS_DIR = join(SHARED_DIR, "schemas")
@@ -38,6 +36,15 @@ def get_faas_profiler_version():
         return "-"
 
 
+class Provider(Enum):
+    """
+    Enumeration of different cloud providers.
+    """
+    AWS = "aws"
+    GCP = "gcp"
+    AZURE = "azure"
+
+
 class Config:
 
     ConfigItem = namedtuple('ConfigItem', ['name', 'parameters'])
@@ -51,7 +58,7 @@ class Config:
 
     @classmethod
     def load_from_file(cls, config_file: str) -> Type[Config]:
-        if exists(config_file):
+        if config_file is not None and exists(config_file):
             try:
                 with open(config_file, "r") as fp:
                     try:
@@ -145,9 +152,6 @@ class ProfileContext:
             self._logger.error(f"Could not get module by function: {err}")
             self._function_module = None
 
-    def set_base_information(self):
-        self._created_at = datetime.now()
-
     def set_measurement_process_pid(self, pid: int) -> None:
         self._measurement_process_pid = pid
 
@@ -190,10 +194,6 @@ class ProfileContext:
     @property
     def tmp_results_dir(self):
         return self._tmp_dir
-
-    def handle_function_args(self, event, context):
-        self._payload_event, self._payload_context = parse_function_payload(
-            event, context)
 
 
 @dataclass
