@@ -17,3 +17,8 @@ requests
 
 # --- Measurements packages --
 psutil
+
+# -- Original patching packages --
+## AWS SDK
+boto3
+botocore
