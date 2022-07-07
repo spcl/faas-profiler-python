@@ -15,7 +15,7 @@ from functools import cached_property
 from typing import Any, List, Type
 
 from faas_profiler_python.captures.base import Capture
-from faas_profiler_python.config import Config, ProfileContext, get_faas_profiler_version
+from faas_profiler_python.config import ProfileConfig, ProfileContext, get_faas_profiler_version
 from faas_profiler_python.utilis import Registerable, registerable_key
 
 
@@ -42,7 +42,7 @@ class ResultsCollector:
 
     def __init__(
         self,
-        config: Type[Config],
+        config: Type[ProfileConfig],
         profile_context: Type[ProfileContext],
         captures: List[Type[Capture]]
     ) -> None:

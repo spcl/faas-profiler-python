@@ -13,7 +13,7 @@ from functools import wraps
 
 from faas_profiler_python.captures.base import Capture
 from faas_profiler_python.measurements import MeasurementProcess, MeasurementGroup
-from faas_profiler_python.config import Config, ProfileContext, MeasuringState, Provider
+from faas_profiler_python.config import ProfileConfig, ProfileContext, MeasuringState, Provider
 from faas_profiler_python.exporter import ResultsCollector, Exporter
 from faas_profiler_python.patchers import unpatch_modules
 from faas_profiler_python.payload import Payload
@@ -48,8 +48,8 @@ class Profiler:
     _logger.setLevel(logging.INFO)
 
     def __init__(self, config_file: str = None) -> None:
-        self._logger.info(f"Load configuration: {config_file}")
-        self.config = Config.load_from_file(config_file)
+        # Load user configuration
+        self.config = ProfileConfig.load_file(config_file)
 
         # Determine Cloud Provider: TODO: Make this dynamic
         self.cloud_provider = Provider.AWS

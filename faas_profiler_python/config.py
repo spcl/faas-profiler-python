@@ -20,6 +20,8 @@ from typing import Any, List, Type
 from functools import reduce, cached_property
 from collections import namedtuple
 
+from faas_profiler_python.utilis import lowercase_keys
+
 ROOT_DIR = abspath(dirname(__file__))
 SHARED_DIR = join(dirname(ROOT_DIR), "shared")
 SCHEMAS_DIR = join(SHARED_DIR, "schemas")
@@ -44,77 +46,108 @@ class Provider(Enum):
     AZURE = "azure"
 
 
-class Config:
+class ConfigSyntaxError(SyntaxError):
+    pass
 
-    ConfigItem = namedtuple('ConfigItem', ['name', 'parameters'])
 
-    _logger = logging.getLogger("Config")
+class ProfileConfig:
+    """
+    Representation of the FaaS-Profiler config file (fp_config.yml)
+    """
+
+    _logger = logging.getLogger("ProfileConfig")
     _logger.setLevel(logging.INFO)
+
+    Entity = namedtuple('Entity', 'name parameters')
 
     MEASUREMENTS_KEY = "measurements"
     CAPTURES_KEY = "captures"
     EXPORTERS_KEY = "exporters"
+    TRACING_KEY = "tracing"
 
     @classmethod
-    def load_from_file(cls, config_file: str) -> Type[Config]:
-        if config_file is not None and exists(config_file):
-            try:
-                with open(config_file, "r") as fp:
-                    try:
-                        config = yaml.safe_load(fp)
-                        if config is None or isinstance(config, dict):
-                            return Config(
-                                config=config if config else {},
-                                config_file=config_file)
+    def load_file(cls, fp_config_file: str) -> Type[ProfileConfig]:
+        cls._logger.info(f"Load configuration: {fp_config_file}")
+        # Default config if file does not exists
+        if fp_config_file is None or not exists(fp_config_file):
+            cls._logger.warn(
+                "No profile configuration file found. Take default configuration")
+            return cls(config={})
 
-                        raise ValueError(
-                            f"Profiler configuration {config_file} must be a dict, but got {type(config)}")
-                    except yaml.YAMLError as err:
+        try:
+            with open(fp_config_file, "r") as fp:
+                try:
+                    config = yaml.safe_load(fp)
+                except yaml.YAMLError as err:
+                    cls._logger.error(
+                        f"Could not parse profiler config file: {err}")
+                else:
+                    if not isinstance(config, dict):
                         cls._logger.error(
-                            f"Could not parse profiler config file: {err}")
-            except IOError as err:
-                cls._logger.error(f"Could not open profiler config file: {err}")
+                            f"Profiler configuration {fp_config_file} must be a dict, but got {type(config)}")
+                        config = {}
 
-        return Config()
+                    return cls(config)
+        except IOError as err:
+            cls._logger.error(f"Could not open profiler config file: {err}")
 
-    def __init__(
-        self,
-        config: dict = {},
-        config_file: str = None
-    ) -> None:
-        self._config = config
-        self._config_file = config_file
+        return cls(config={})
 
-    @cached_property
-    def measurements(self):
-        return self._parse_to_config_items(
-            self._config.get(self.MEASUREMENTS_KEY, []))
+    def __init__(self, config: dict = {}) -> None:
+        self.config = lowercase_keys(config)
 
-    @cached_property
-    def exporters(self) -> List[Config.ConfigItem]:
-        return self._parse_to_config_items(
-            self._config.get(self.EXPORTERS_KEY, []))
+        self._measurements: List[ProfileConfig.Entity] = self._parse_to_entities(
+            self.MEASUREMENTS_KEY)
+        self._captures: List[ProfileConfig.Entity] = self._parse_to_entities(
+            self.CAPTURES_KEY)
+        self._exporters: List[ProfileConfig.Entity] = self._parse_to_entities(
+            self.EXPORTERS_KEY)
 
-    @cached_property
-    def captures(self) -> List[Config.ConfigItem]:
-        return self._parse_to_config_items(
-            self._config.get(self.CAPTURES_KEY, []))
+        self._tracing = lowercase_keys(self.config.get(self.TRACING_KEY, {}))
 
-    def _parse_to_config_items(
-        self,
-        config_list: list
-    ) -> List[Config.ConfigItem]:
-        if not config_list:
-            return []
+    @property
+    def tracing_enabled(self) -> bool:
+        """
+        Returns True if tracing is enabled by user.
+        Default: False
+        """
+        return self._tracing.get("enabled", True)
 
-        items = []
-        for config in config_list:
-            name = config.get("name")
+    @property
+    def measurements(self) -> List[ProfileConfig.Entity]:
+        """
+        Returns a List of Entities for each requested measurement
+        """
+        return self._measurements
+
+    @property
+    def captures(self) -> List[ProfileConfig.Entity]:
+        """
+        Returns a List of Entities for each requested capture
+        """
+        return self._captures
+
+    @property
+    def exporters(self) -> List[ProfileConfig.Entity]:
+        """
+        Returns a List of Entities for each requested exporter
+        """
+        return self._exporters
+
+    def _parse_to_entities(self, key: str) -> List[ProfileConfig.Entity]:
+        entities = []
+        config_list = self.config.get(key, [])
+        if not isinstance(config_list, list):
+            raise ConfigSyntaxError(
+                f"Config of {key} must be a list, got {type(config_list)}")
+
+        for config_item in config_list:
+            name = config_item.get("name")
             if name:
-                items.append(Config.ConfigItem(
-                    name, config.get("parameters", {})))
+                entities.append(ProfileConfig.Entity(
+                    name, config_item.get("parameters", {})))
 
-        return items
+        return entities
 
 
 class ProfileContext:

@@ -21,7 +21,7 @@ from jsonschema import validate, ValidationError
 
 from faas_profiler_python.utilis import Registerable
 from faas_profiler_python.config import (
-    Config,
+    ProfileConfig,
     ProfileContext,
     MeasuringState,
     ProcessFeedback,
@@ -123,7 +123,7 @@ class MeasurementGroup:
     _logger.setLevel(logging.INFO)
 
     @classmethod
-    def make_groups(cls, measurement_list: List[Type[Config.ConfigItem]]):
+    def make_groups(cls, measurement_list: List[Type[ProfileConfig.Entity]]):
         periodics = []
         defaults = []
 
