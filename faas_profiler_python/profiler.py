@@ -62,7 +62,10 @@ class Profiler:
         self.profile_context = ProfileContext()
 
         # Distributed Tracer
-        self.tracer = DistributedTracer()
+        self.tracer = DistributedTracer(
+            config=self.config,
+            provider=self.cloud_provider,
+            context=self.profile_context)
 
         # Measurements
         self.default_measurements: Type[MeasurementGroup] = None
@@ -93,19 +96,21 @@ class Profiler:
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        self._start(payload=(args, kwargs))
-        self._logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
-        try:
-            func_ret = func(*args, **kwargs)
-        except Exception as ex:
-            self._logger.error(f"Function not successfully executed: {ex}")
+        self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
+        with self.tracer.start(self.payload):
+            self._start(payload=(args, kwargs))
+            self._logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
 
-            func_ret = None
-        finally:
-            self._logger.info("-- FUNCTION EXCUTED --")
-            self._stop(payload=(args, kwargs), func_return=func_ret)
+            try:
+                func_ret = func(*args, **kwargs)
+            except Exception as ex:
+                self._logger.error(f"Function not successfully executed: {ex}")
+                func_ret = None
+            finally:
+                self._logger.info("-- FUNCTION EXCUTED --")
+                self._stop(payload=(args, kwargs), func_return=func_ret)
 
-        self.export()
+            self.export()
 
         return func_ret
 
@@ -116,11 +121,6 @@ class Profiler:
         Internal use only. Use __call__ to start a new profile run.
         """
         self._logger.info("Profiler run started.")
-
-        self.payload = Payload.factory(self.cloud_provider)(
-            *payload[0], **payload[1])
-
-        self.tracer.handle_inbound_request()
 
         self._start_capturing()
         self._start_default_measurements()
