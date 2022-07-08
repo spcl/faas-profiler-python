@@ -13,9 +13,8 @@ from typing import Type
 from functools import partial
 
 from faas_profiler_python.aws import AWSContext, AWSEvent
-from faas_profiler_python.config import Provider
+from faas_profiler_python.config import Provider, TraceContext
 from faas_profiler_python.utilis import Registerable
-from faas_profiler_python.tracer import TraceContext
 
 
 class Payload(Registerable, ABC):
@@ -26,12 +25,59 @@ class Payload(Registerable, ABC):
     _logger = logging.getLogger("Payload")
     _logger.setLevel(logging.INFO)
 
+    @classmethod
+    def resolve(cls, provider: Provider, payload: tuple) -> Type[Payload]:
+        """
+        Resolves the given payload based on the cloud provider
+        """
+        cls._logger.info("[PAYLOAD]: Extract payload")
+
+        try:
+            payload_resolver = cls.factory(provider)
+        except ValueError:
+            cls._logger.warn(
+                f"[PAYLOAD]: Could not find a payload resolver for: {provider}")
+            return UnresolvedPayload(*payload[0], **payload[1])
+
+        try:
+            return payload_resolver(*payload[0], **payload[1])
+        except Exception as err:
+            cls._logger.error(
+                f"[PAYLOAD]: Could parse payload: {err}")
+            return UnresolvedPayload(*payload[0], **payload[1])
+
     @abstractmethod
     def extract_tracing_context(self) -> Type[TraceContext]:
         pass
 
+    @abstractmethod
+    def extract_trigger_context(self) -> dict:
+        pass
+
 
 register_resolver = partial(Payload.register, module_delimiter=None)
+
+
+class UnresolvedPayload(Payload):
+    """
+    Dummy class for payload which could not get resolved.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+    def extract_tracing_context(self) -> Type[TraceContext]:
+        """
+        Return a empty trace context.
+        """
+        return TraceContext()
+
+    def extract_trigger_context(self) -> dict:
+        """
+        Returns a empty trigger context.
+        """
+        return {}
 
 
 @register_resolver(Provider.AWS)
@@ -52,35 +98,19 @@ class AWSPayload(Payload):
         self.context = AWSContext(self.context_data)
 
     def extract_tracing_context(self) -> Type[TraceContext]:
-        return super().extract_tracing_context()
+        """
+        Returns context about tracing extracted either from event or client context.
 
+        Tracing context from event is preferred.
+        """
+        event_ctx = self.event.extract_trace_context()
+        if event_ctx.is_complete:
+            return event_ctx
 
-# class AWSContext:
+        return self.context.extract_trace_context()
 
-#     def __init__(self, context) -> None:
-#         self._context = context
-
-#         self.aws_request_id = getattr(context, "aws_request_id", None)
-#         self.log_group_name = getattr(context, "log_group_name", None)
-#         self.log_stream_name = getattr(context, "log_stream_name", None)
-#         self.function_name = getattr(context, "function_name", None)
-#         self.memory_limit_in_mb = getattr(context, "memory_limit_in_mb", None)
-#         self.function_version = getattr(context, "function_version", None)
-#         self.invoked_function_arn = getattr(
-#             context, "invoked_function_arn", None)
-#         self.client_context = getattr(context, "client_context", None)
-
-#         self.size = getsizeof(context)
-
-#     @property
-#     def context(self) -> dict:
-#         return {
-#             "aws_request_id": self.aws_request_id,
-#             "log_group_name": self.log_group_name,
-#             "log_stream_name": self.log_stream_name,
-#             "function_name": self.function_name,
-#             "memory_limit_in_mb": self.memory_limit_in_mb,
-#             "function_version": self.function_version,
-#             "invoked_function_arn": self.invoked_function_arn,
-#             "client_context": self.client_context,
-#         }
+    def extract_trigger_context(self) -> dict:
+        """
+        Returns context about the trigger extracted from the AWS event.
+        """
+        return self.event.extract_trigger_context()
