@@ -57,7 +57,6 @@ class ResultsCollector:
             "py_faas_version": get_faas_profiler_version(),
             "function_name": self.profile_context.function_name,
             "function_module": self.profile_context.function_module,
-            "created_at": str(self.profile_context.created_at.isoformat()),
             "measurements": self._collect_measurements_results(),
             "captures": self._collect_capture_results()
         }

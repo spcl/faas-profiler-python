@@ -42,7 +42,7 @@ class Measurement(Registerable):
 
     def __init__(
         self,
-        profiler_context: Type[ProfileContext],
+        profiler_context: Type[ProfileContext]
     ) -> None:
         self.results_schema = load_schema_by_measurement_name(self.name_parts)
         self.tmp_results_file = join(

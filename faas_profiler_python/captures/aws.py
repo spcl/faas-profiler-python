@@ -23,7 +23,8 @@ class S3Capture(Capture):
 
     def start(self):
         self.patcher.start()
-        self.patcher.add_capture_observer(self)
+        self.patcher.register_observer(
+            self, on=("botocore.client", "BaseClient._make_api_call"))
 
     def __call__(
         self,
@@ -51,7 +52,7 @@ class S3Capture(Capture):
         })
 
     def stop(self) -> None:
-        self.patcher.remove_capture_observer(self)
+        self.patcher.deregister_observer(self)
         self.patcher.stop()
 
     def invocations(self) -> list:
@@ -73,7 +74,7 @@ class EFSCapture(Capture):
 
     def start(self):
         self.patcher.start()
-        self.patcher.add_capture_observer(self)
+        self.patcher.register_observer(self, on=("builtins", "open"))
 
     def __call__(
         self,
@@ -93,7 +94,7 @@ class EFSCapture(Capture):
                 })
 
     def stop(self) -> None:
-        self.patcher.remove_capture_observer(self)
+        self.patcher.deregister_observer(self)
         self.patcher.stop()
 
     def invocations(self) -> list:

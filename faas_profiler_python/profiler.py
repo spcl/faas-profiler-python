@@ -17,6 +17,7 @@ from faas_profiler_python.config import ProfileConfig, ProfileContext, Measuring
 from faas_profiler_python.exporter import ResultsCollector, Exporter
 from faas_profiler_python.patchers import unpatch_modules
 from faas_profiler_python.payload import Payload
+from faas_profiler_python.tracer import DistributedTracer
 
 
 def profile(config_file: str = None):
@@ -59,6 +60,9 @@ class Profiler:
 
         # Profiler Context
         self.profile_context = ProfileContext()
+
+        # Distributed Tracer
+        self.tracer = DistributedTracer()
 
         # Measurements
         self.default_measurements: Type[MeasurementGroup] = None
@@ -116,7 +120,9 @@ class Profiler:
         self.payload = Payload.factory(self.cloud_provider)(
             *payload[0], **payload[1])
 
-        self._start_capturing_and_tracing()
+        self.tracer.handle_inbound_request()
+
+        self._start_capturing()
         self._start_default_measurements()
         self._start_periodic_measurements()
 
@@ -129,7 +135,7 @@ class Profiler:
         self._logger.info("Profile run stopped.")
         self._stop_periodic_measurements()
         self._stop_default_measurements()
-        self._stop_capturing_and_tracing()
+        self._stop_capturing()
 
         if self.measurement_process:
             self.measurement_process.join()
@@ -270,7 +276,7 @@ class Profiler:
             self._logger.info(f"Closed child pipe: {self.child_endpoint}")
             self.child_endpoint.close()
 
-    def _start_capturing_and_tracing(self):
+    def _start_capturing(self):
         for capture_conf in self.config.captures:
             try:
                 capture_class = Capture.factory(capture_conf.name)
@@ -284,7 +290,7 @@ class Profiler:
                 self.active_captures.append(capture)
         self._logger.info("[CAPTURES]: Started all captures")
 
-    def _stop_capturing_and_tracing(self):
+    def _stop_capturing(self):
         for patcher in self.active_captures:
             patcher.stop()
         self._logger.info("[CAPTURES]: Stopped all captures")

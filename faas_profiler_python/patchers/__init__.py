@@ -9,10 +9,10 @@ import logging
 from importlib import import_module
 from typing import Type
 
-from faas_profiler_python.patchers.base import BasePatcher
+from faas_profiler_python.patchers.base import BasePatcher, PatchedFunction # noqa
 
 PATCHED_MODULES = dict()
-_PATCHERS_MODULE = "py_faas_profiler.patchers.{}"
+_PATCHERS_MODULE = "faas_profiler_python.patchers.{}"
 
 _logger = logging.getLogger("Patchers")
 _logger.setLevel(logging.INFO)

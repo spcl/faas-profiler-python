@@ -9,10 +9,10 @@ from __future__ import annotations
 import logging
 
 from dataclasses import dataclass
-from typing import Callable, Type
+from typing import Callable, Type, List
 
-import faas_profiler_python.patchers.base as base
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
+from faas_profiler_python.patchers import BasePatcher, PatchedFunction
 
 from botocore.client import BaseClient
 
@@ -36,7 +36,7 @@ class AWSApiResponse:
     content_length: int = None
 
 
-class Patcher(base.BasePatcher):
+class Patcher(BasePatcher):
 
     _logger = logging.getLogger("Botocore Patcher")
     _logger.setLevel(logging.INFO)
@@ -44,12 +44,13 @@ class Patcher(base.BasePatcher):
     target_module: str = "botocore"
     patch_only_on_import: bool = True
 
-    def patch(self):
-        self.add_patch_function(
-            "botocore.client",
-            "BaseClient._make_api_call",
-            before_invocation=self.extract_call_information,
-            after_invocation=self.extract_return_information)
+    @property
+    def patched_functions(self) -> List[PatchedFunction]:
+        return [
+            PatchedFunction(
+                "botocore.client", "BaseClient._make_api_call",
+                before_invocation=self.extract_call_information,
+                after_invocation=self.extract_return_information)]
 
     def extract_call_information(
         self,
