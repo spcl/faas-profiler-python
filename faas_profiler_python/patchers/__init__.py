@@ -9,7 +9,7 @@ import logging
 from importlib import import_module
 from typing import Type
 
-from faas_profiler_python.patchers.base import BasePatcher, PatchedFunction # noqa
+from faas_profiler_python.patchers.base import BasePatcher, PatchedFunction  # noqa
 
 PATCHED_MODULES = dict()
 _PATCHERS_MODULE = "faas_profiler_python.patchers.{}"
@@ -36,7 +36,7 @@ def patch_module(module: str) -> Type[BasePatcher]:
                 patcher = patcher_module.Patcher()
                 # TODO: Handle patch_only_on_import
 
-                PATCHED_MODULES[module] = patcher
+                PATCHED_MODULES[path] = patcher
                 return patcher
             else:
                 _logger.error(f"Patcher class not found in {patcher_module}")

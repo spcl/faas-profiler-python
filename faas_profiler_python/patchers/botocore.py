@@ -71,8 +71,8 @@ class Patcher(BasePatcher):
         http_method, http_uri = self._get_http_info(meta, operation)
 
         return AWSApiCall(
-            service=service,
-            operation=operation,
+            service=str(service).lower(),
+            operation=str(operation).lower(),
             endpoint_url=getattr(meta, "endpoint_url"),
             region_name=getattr(meta, "region_name"),
             api_params=api_params,
