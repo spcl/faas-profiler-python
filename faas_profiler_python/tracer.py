@@ -20,7 +20,7 @@ from faas_profiler_python.config import (
     SPAN_ID_HEADER
 )
 from faas_profiler_python.aws import AWSInjection
-from faas_profiler_python.payload import AWSPayload, Payload
+from faas_profiler_python.payload import Payload
 
 
 class InvocationSpan:
@@ -40,10 +40,10 @@ class InvocationSpan:
 
         if parent_ctx.profile_id is None:
             cls._logger.info(
-                f"No profile id found. Creating Span with new profile id")
+                "No profile id found. Creating Span with new profile id")
 
         if parent_ctx.root_id is None:
-            cls._logger.info(f"No root id found. Treating Span as root span.")
+            cls._logger.info("No root id found. Treating Span as root span.")
 
         return cls(
             profile_id=parent_ctx.profile_id,
