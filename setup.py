@@ -10,7 +10,7 @@ with open("requirements.txt", "r") as fh:
     requirements = fh.read().splitlines()
 
 setuptools.setup(
-    name='py_faas_profiler',
+    name='faas_profiler_python',
     version='0.0.1',
     url='https://github.com/spcl/faas-profiler-python',
     packages=setuptools.find_packages(),
