@@ -7,12 +7,11 @@ Patcher for IO botocore.
 from __future__ import annotations
 
 import io
-import logging
 
 from dataclasses import dataclass
-from typing import Callable, Type, List
+from typing import Any, Callable, Type
 
-from faas_profiler_python.patchers import BasePatcher, PatchedFunction
+from faas_profiler_python.patchers import FunctionPatcher
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
 
 
@@ -31,28 +30,16 @@ class IOReturn:
     encoding: str = None
 
 
-class Patcher(BasePatcher):
+class Open(FunctionPatcher):
+    module_name: str = "builtins"
+    function_name: str = "open"
 
-    _logger = logging.getLogger("IO Patcher")
-    _logger.setLevel(logging.INFO)
-
-    # target_module: str = "builtins"
-    patch_only_on_import: bool = True
-
-    @property
-    def patched_functions(self) -> List[PatchedFunction]:
-        return [
-            PatchedFunction(
-                "builtins", "open",
-                before_invocation=self.extract_call_information,
-                after_invocation=self.extract_return_information)]
-
-    def extract_call_information(
+    def before_invocation(
         self,
         original_func: Type[Callable],
-        instance,
-        args,
-        kwargs
+        instance: Any,
+        args: tuple,
+        kwargs: dict
     ) -> Type[IOCall]:
         file = get_arg_by_key_or_pos(args, kwargs, 0, "file")
         mode = get_arg_by_key_or_pos(args, kwargs, 1, "mode")
@@ -60,16 +47,19 @@ class Patcher(BasePatcher):
 
         return IOCall(str(file), str(mode), str(encoding))
 
-    def extract_return_information(self, function_return):
-        if not hasattr(function_return, "__class__"):
+    def after_invocation(
+            self,
+            response: Any,
+            error: Any = None) -> Type[IOReturn]:
+        if not hasattr(response, "__class__"):
             return
 
-        io_class = function_return.__class__
+        io_class = response.__class__
         if not issubclass(io_class, io.IOBase):
             return
 
         return IOReturn(
             wrapper_type=io_class,
-            file=str(getattr(function_return, "name", None)),
-            mode=str(getattr(function_return, "mode", None)),
-            encoding=str(getattr(function_return, "encoding", None)))
+            file=str(getattr(response, "name", None)),
+            mode=str(getattr(response, "mode", None)),
+            encoding=str(getattr(response, "encoding", None)))

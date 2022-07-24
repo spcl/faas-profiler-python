@@ -5,16 +5,11 @@ Patcher for AWS botocore.
 """
 
 from __future__ import annotations
-
-import logging
-
 from dataclasses import dataclass
-from typing import Callable, Type, List
+from typing import Callable, Type, Any
 
+from faas_profiler_python.patchers import FunctionPatcher
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
-from faas_profiler_python.patchers import BasePatcher, PatchedFunction
-
-from botocore.client import BaseClient
 
 
 @dataclass
@@ -30,32 +25,22 @@ class AWSApiCall:
 
 @dataclass
 class AWSApiResponse:
+    request_id: str = None
     http_code: int = None
     retry_attempts: int = None
     content_type: str = None
     content_length: int = None
 
 
-class Patcher(BasePatcher):
+class BotocoreAPI(FunctionPatcher):
+    module_name: str = "botocore"
+    submodules: str = ["client"]
+    function_name: str = "BaseClient._make_api_call"
 
-    _logger = logging.getLogger("Botocore Patcher")
-    _logger.setLevel(logging.INFO)
-
-    target_module: str = "botocore"
-    patch_only_on_import: bool = True
-
-    @property
-    def patched_functions(self) -> List[PatchedFunction]:
-        return [
-            PatchedFunction(
-                "botocore.client", "BaseClient._make_api_call",
-                before_invocation=self.extract_call_information,
-                after_invocation=self.extract_return_information)]
-
-    def extract_call_information(
+    def before_invocation(
         self,
         original_func: Type[Callable],
-        instance: Type[BaseClient],
+        instance: Any,
         args: tuple,
         kwargs: dict
     ) -> Type[AWSApiCall]:
@@ -79,16 +64,17 @@ class Patcher(BasePatcher):
             http_uri=http_uri,
             http_method=http_method)
 
-    def extract_return_information(self, function_return):
+    def after_invocation(self, response: Any, error: Any = None) -> Any:
         return AWSApiResponse(
-            http_code=function_return.get(
+            request_id=response.get("ResponseMetadata", {}).get("RequestId"),
+            http_code=response.get(
                 "ResponseMetadata",
                 {}).get("HTTPStatusCode"),
-            retry_attempts=function_return.get(
+            retry_attempts=response.get(
                 "ResponseMetadata",
                 {}).get("RetryAttempts"),
-            content_type=function_return.get("ContentType"),
-            content_length=function_return.get("ContentLength"))
+            content_type=response.get("ContentType"),
+            content_length=response.get("ContentLength"))
 
     def _get_http_info(
         self,
@@ -108,7 +94,7 @@ class Patcher(BasePatcher):
 
         return None, None
 
-    def _get_service(self, instance: Type[BaseClient]) -> str:
+    def _get_service(self, instance) -> str:
         if not hasattr(instance, "_endpoint"):
             return
 
