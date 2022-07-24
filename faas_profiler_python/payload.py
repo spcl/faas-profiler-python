@@ -10,14 +10,12 @@ import logging
 
 from abc import ABC, abstractmethod
 from typing import Type
-from functools import partial
 
 from faas_profiler_python.aws import AWSContext, AWSEvent
 from faas_profiler_python.config import Provider, TraceContext
-from faas_profiler_python.utilis import Registerable
 
 
-class Payload(Registerable, ABC):
+class Payload(ABC):
     """
     Base class for payload extraction and parsing.
     """
@@ -31,13 +29,12 @@ class Payload(Registerable, ABC):
         Resolves the given payload based on the cloud provider
         """
         cls._logger.info("[PAYLOAD]: Extract payload")
-
-        try:
-            payload_resolver = cls.factory(provider)
-        except ValueError:
+        if provider == Provider.AWS:
+            payload_resolver = AWSPayload
+        else:
             cls._logger.warn(
                 f"[PAYLOAD]: Could not find a payload resolver for: {provider}")
-            return UnresolvedPayload(*payload[0], **payload[1])
+            payload_resolver = UnresolvedPayload
 
         try:
             return payload_resolver(*payload[0], **payload[1])
@@ -53,9 +50,6 @@ class Payload(Registerable, ABC):
     @abstractmethod
     def extract_trigger_context(self) -> dict:
         pass
-
-
-register_resolver = partial(Payload.register, module_delimiter=None)
 
 
 class UnresolvedPayload(Payload):
@@ -80,7 +74,6 @@ class UnresolvedPayload(Payload):
         return {}
 
 
-@register_resolver(Provider.AWS)
 class AWSPayload(Payload):
     """
     Representation of an incoming AWS Lambda payload consisting of context and event data.
