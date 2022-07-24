@@ -22,6 +22,7 @@ from faas_profiler_python.core import BasePlugin
 
 if TYPE_CHECKING:
     from faas_profiler_python.captures import Capture
+    from faas_profiler_python.tracer import DistributedTracer
 
 ACTIVE_FUNCTION_PATCHERS = dict()
 
@@ -74,6 +75,7 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         self._patched: bool = False
 
         self._registered_captures: Set[Type[Capture]] = set()
+        self._tracer: Type[DistributedTracer] = None
 
         super().__init__()
 
@@ -153,7 +155,10 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
 
         try:
             execution_start = time()
-            response = original_func(*args, **kwargs)
+            with self._modified_payload(
+                    function_args=(args, kwargs),
+                    before_result=before_result) as (mod_args, mod_kwargs):
+                response = original_func(*mod_args, **mod_kwargs)
         except Exception as err:
             execution_end = time()
 
@@ -223,14 +228,35 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
             return None
 
     @contextmanager
-    def _payload_modification(self):
-        pass
+    def _modified_payload(
+            self,
+            function_args: tuple,
+            before_result: Any = None):
+        """
+        Calls the tracer to modify the payload if required.
+        """
+        if self._tracer:
+            org_function_args = function_args
+            try:
+                self.modify_function_args(function_args, before_result)
+            except Exception as err:
+                self._logger.error(
+                    f"Injection failed: {err}. Take unmodified parameters.")
+                function_args = org_function_args
+
+        yield function_args[0], function_args[1]
 
     def register_capture(self, capture) -> None:
         """
         Registers a new capture for the patcher.
         """
         self._registered_captures.add(capture)
+
+    def set_tracer(self, tracer) -> None:
+        """
+        Sets the current tracer.
+        """
+        self._tracer = tracer
 
     def activate(self) -> None:
         """
@@ -259,6 +285,13 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         kwargs: dict
     ) -> Any:
         pass
+
+    def modify_function_args(
+        self,
+        function_args: tuple,
+        before_result: Any = None
+    ) -> tuple:
+        raise NotImplementedError
 
     @abstractmethod
     def after_invocation(
