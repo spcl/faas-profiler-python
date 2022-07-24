@@ -56,14 +56,15 @@ class Profiler(Loggable):
         self.config = ProfileConfig.load_file(config_file)
 
         # Load all requested plugins
-        # captures = Capture.load(self.config.captures)
+        captures = Capture.load(self.config.captures)
         measurements = Measurement.load(self.config.measurements)
 
-        self.periodic_measurements, self.default_measurements = split_plugin_list_by_subclass(
+        periodic_measurements, default_measurements = split_plugin_list_by_subclass(
             measurements, PeriodicMeasurement)
 
-        self.periodic_batch = BatchExecution(self.periodic_measurements)
-        self.default_batch = BatchExecution(self.default_measurements)
+        self.periodic_batch = BatchExecution(periodic_measurements)
+        self.default_batch = BatchExecution(default_measurements)
+        self.capture_batch = BatchExecution(captures)
 
         # Determine Cloud Provider: TODO: Make this dynamic
         self.cloud_provider = Provider.AWS
@@ -80,11 +81,9 @@ class Profiler(Loggable):
         #     provider=self.cloud_provider,
         #     context=self.profile_context)
 
-        # Captures
-        # self.active_captures: List[Type[Capture]] = []
-
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
+        self._captures_started: bool = False
 
         # Measurement process for peridic measurements
         self.child_endpoint: Type[connection.Connection] = None
@@ -93,8 +92,8 @@ class Profiler(Loggable):
 
         self.logger.info((
             "[PROFILER PLAN]: \n"
-            f"- Measurements: {self.config.measurements} \n"
-            f"- Captures: {self.config.captures} \n"
+            f"- Measurements: {measurements} \n"
+            f"- Captures: {captures} \n"
             f"- Exporters: {self.config.exporters}"
         ))
 
@@ -129,7 +128,7 @@ class Profiler(Loggable):
         """
         self.logger.info("[PROFILER] Profiler run started.")
 
-        # self._start_capturing()
+        self._start_capturing()
         self._start_default_measurements()
         self._start_periodic_measurements()
 
@@ -142,7 +141,7 @@ class Profiler(Loggable):
         self.logger.info("Profile run stopped.")
         self._stop_periodic_measurements()
         self._stop_default_measurements()
-        # self._stop_capturing()
+        self._stop_capturing()
 
         if self.periodic_process:
             self.periodic_process.join()
@@ -175,7 +174,7 @@ class Profiler(Loggable):
         #             config_item.parameters).dump(results_collector)
         #     except Exception as err:
         #         self.logger.error(
-        #             f"Exporting results with {config_item.name} failed: {err}")
+        # f"Exporting results with {config_item.name} failed: {err}")
 
     # Private methods
 
@@ -183,7 +182,6 @@ class Profiler(Loggable):
         """
         Starts all default measurements
         """
-
         if not self.default_batch:
             return
 
@@ -198,7 +196,7 @@ class Profiler(Loggable):
         """
         Starts all periodic measurements by creating a process with the batch execution
         """
-        if not self.periodic_measurements:
+        if not self.periodic_batch:
             return
 
         self.child_endpoint, self.parent_endpoint = Pipe()
@@ -284,24 +282,34 @@ class Profiler(Loggable):
             self.logger.info(f"Closed child pipe: {self.child_endpoint}")
             self.child_endpoint.close()
 
-    # def _start_capturing(self):
-    #     for capture_conf in self.config.captures:
-    #         try:
-    #             capture_class = Capture.factory(capture_conf.name)
-    #         except ValueError:
-    #             self.logger.warn(
-    #                 f"[CAPTURES]: Could not find a capture with name: {capture_conf.name}")
-    #         else:
-    #             capture = capture_class(capture_conf.parameters)
-    #             capture.start()
+    def _start_capturing(self):
+        """
+        Start all capturing.
+        """
+        if not self.capture_batch:
+            return
 
-    #             self.active_captures.append(capture)
-    #     self.logger.info("[CAPTURES]: Started all captures")
+        self.logger.info(
+            "[CAPTURES]: Initializing and starting.")
 
-    # def _stop_capturing(self):
-    #     for patcher in self.active_captures:
-    #         patcher.stop()
-    #     self.logger.info("[CAPTURES]: Stopped all captures")
+        self.capture_batch.initialize()
+        self.capture_batch.start()
+        self._captures_started = True
 
-    #     unpatch_modules()
-    #     self.logger.info("[CAPTURES]: Unpatched all modules.")
+    def _stop_capturing(self):
+        """
+        Stops all capturing.
+        """
+        if not self.capture_batch:
+            return
+
+        if not self._captures_started:
+            self.logger.warn(
+                "[CAPTURES]: Attempts to stop capturings before they are successfully started. Skipping.")
+            return
+
+        self.logger.info(
+            "[CAPTURES]: Stopping and deinitializing.")
+
+        self.capture_batch.stop()
+        self.capture_batch.deinitialize()
