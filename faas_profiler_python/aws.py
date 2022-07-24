@@ -5,27 +5,17 @@ Module for all AWS specific logic.
 """
 
 from collections import namedtuple
-from functools import partial
 import logging
 
 from enum import Enum
 from typing import Any, Type
 
-from faas_profiler_python.patchers import patch_module
-from faas_profiler_python.patchers.base import PatchEvent
-from faas_profiler_python.patchers.botocore import AWSApiCall
-from faas_profiler_python.utilis import (
-    lowercase_keys,
-    get_idx_safely,
-    decode_base64_json_to_dict,
-    encode_dict_to_base64_json,
-    get_arg_by_key_or_pos
-)
+from faas_profiler_python.utilis import lowercase_keys, get_idx_safely
 from faas_profiler_python.config import (
     TraceContext,
-    PROFILE_ID_HEADER,
-    ROOT_ID_HEADER,
-    SPAN_ID_HEADER,
+    TRACE_ID_HEADER,
+    INVOCATION_ID_HEADER,
+    PARENT_ID_HEADER,
     TRACE_CONTEXT_KEY
 )
 
@@ -151,9 +141,9 @@ class AWSEvent:
         """
         headers = lowercase_keys(self.data.get("headers", {}))
         return TraceContext(
-            profile_id=headers.get(PROFILE_ID_HEADER),
-            root_id=headers.get(ROOT_ID_HEADER),
-            span_id=headers.get(SPAN_ID_HEADER))
+            trace_id=headers.get(TRACE_ID_HEADER),
+            invocation_id=headers.get(INVOCATION_ID_HEADER),
+            parent_id=headers.get(PARENT_ID_HEADER))
 
     def _sns_tracing_context(self) -> Type[TraceContext]:
         # TODO
@@ -170,9 +160,9 @@ class AWSEvent:
         detail = lowercase_keys(self.data.get("detail", {}))
         context = detail.get(TRACE_CONTEXT_KEY, {})
         return TraceContext(
-            profile_id=context.get(PROFILE_ID_HEADER),
-            root_id=context.get(ROOT_ID_HEADER),
-            span_id=context.get(SPAN_ID_HEADER))
+            trace_id=context.get(TRACE_CONTEXT_KEY),
+            invocation_id=context.get(INVOCATION_ID_HEADER),
+            parent_id=context.get(PARENT_ID_HEADER))
 
     # Helpers
 
@@ -310,87 +300,7 @@ class AWSContext:
         """
         Extracts Trace context from AWS Lambda Context object.
         """
-        context = self.custom_context.get(TRACE_CONTEXT_KEY, {})
         return TraceContext(
-            profile_id=context.get(PROFILE_ID_HEADER),
-            root_id=context.get(ROOT_ID_HEADER),
-            span_id=context.get(SPAN_ID_HEADER))
-
-
-class AWSInjection:
-    """
-    Inject outbound AWS request made with botocore.
-    """
-
-    _logger = logging.getLogger("AWSInjection")
-    _logger.setLevel(logging.INFO)
-
-    INJECTABLE_SERVICES = ['lambda', 'sns', 'sqs', 'cloudwatch']
-
-    def __init__(self) -> None:
-        self.patcher = patch_module("botocore")
-
-    def inject_api_calls(self, data_to_inject: dict):
-        if data_to_inject is None:
-            self._logger.error("No data to inject provided. Cannot inject.")
-            return
-
-        self.patcher.start()
-        self.patcher.inject_with(
-            injection=partial(
-                self._handle_api_call, data_to_inject=data_to_inject), on=(
-                "botocore.client", "BaseClient._make_api_call"))
-
-    def _handle_api_call(
-        self,
-        api_call_args: tuple,
-        event: Type[PatchEvent],
-        aws_api_call: Type[AWSApiCall],
-        data_to_inject: dict
-    ) -> None:
-        if aws_api_call.service not in self.INJECTABLE_SERVICES:
-            self._logger.warn(
-                f"Ignored AWS API call to {aws_api_call.service}. Cannot inject.")
-            return
-
-        call_args, call_kwargs = api_call_args
-        if call_args is None:
-            self._logger.error("Cannot inject function with no parameters")
-            return
-
-        api_params = get_arg_by_key_or_pos(
-            call_args, call_kwargs, 1, "api_params")
-
-        # Lambda Invocation (sync and async)
-        if aws_api_call.service == "lambda" and aws_api_call.operation == "invoke":
-            self._inject_lambda_call(api_params, data_to_inject)
-
-    def _inject_lambda_call(
-        self,
-        api_params: dict,
-        data_to_inject: dict
-    ) -> None:
-        """
-        The Client Context is passed as Base64 object in the api parameters.
-        Thus we need to encode the context (if existing), add our tracing context
-        and then decode in back to Base64
-
-        More info: https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
-        """
-        client_context = {}
-        if "ClientContext" in api_params:
-            try:
-                client_context = decode_base64_json_to_dict(
-                    api_params["ClientContext"])
-            except ValueError as err:
-                self._logger.error(err)
-                return
-
-        # Injection
-        client_context.setdefault("custom", {}).update(data_to_inject)
-
-        try:
-            api_params["ClientContext"] = encode_dict_to_base64_json(
-                client_context)
-        except ValueError as err:
-            self._logger.error(err)
+            trace_id=self.custom_context.get(TRACE_ID_HEADER),
+            invocation_id=self.custom_context.get(INVOCATION_ID_HEADER),
+            parent_id=self.custom_context.get(PARENT_ID_HEADER))
