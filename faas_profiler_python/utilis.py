@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from typing import Any, Dict
 from inflection import underscore
@@ -29,6 +30,11 @@ def get_idx_safely(arr: list, idx: int, default: Any = None) -> Any:
         return arr[idx]
     except IndexError:
         return default
+
+
+def split_plugin_name(name: str, delimiter: str = "::") -> tuple:
+    parts = name.split(delimiter)
+    return (parts[:-1], get_idx_safely(parts, -1))
 
 
 def registerable_name_parts(name, delimiter: str = "::") -> tuple:
@@ -101,3 +107,15 @@ class Registerable:
         except KeyError:
             raise ValueError(
                 f"Unknown measurement name {name}. Available measurements: {list(cls._names_.keys())}")
+
+
+class Loggable:
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.INFO)
+
+
+def plugin_loader(
+
+) -> list:
+    pass
