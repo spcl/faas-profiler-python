@@ -58,7 +58,7 @@ class ProfileConfig:
     _logger = logging.getLogger("ProfileConfig")
     _logger.setLevel(logging.INFO)
 
-    Entity = namedtuple('Entity', 'name parameters')
+    Entity = namedtuple('Entity', 'name parameters external_path')
 
     MEASUREMENTS_KEY = "measurements"
     CAPTURES_KEY = "captures"
@@ -145,7 +145,9 @@ class ProfileConfig:
             name = config_item.get("name")
             if name:
                 entities.append(ProfileConfig.Entity(
-                    name, config_item.get("parameters", {})))
+                    name,
+                    config_item.get("parameters", {}),
+                    config_item.get("from", None)))
 
         return entities
 
