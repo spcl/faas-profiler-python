@@ -8,18 +8,11 @@ from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
 
-# from faas_profiler_python.captures.base import Capture
-# from faas_profiler_python.measurements import MeasurementProcess, MeasurementGroup
-
-
 from faas_profiler_python.config import ProfileConfig, ProfileContext, MeasuringState, Provider
 from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
 # from faas_profiler_python.exporter import ResultsCollector, Exporter
-
-
-# from faas_profiler_python.payload import Payload
-# from faas_profiler_python.tracer import DistributedTracer
-
+from faas_profiler_python.payload import Payload
+from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
 from faas_profiler_python.core import BatchExecution, PeriodicProcess, split_plugin_list_by_subclass
 from faas_profiler_python.utilis import Loggable
@@ -70,16 +63,13 @@ class Profiler(Loggable):
         self.cloud_provider = Provider.AWS
 
         # Payload
-        # self.payload: Type[Payload] = None
+        self.payload: Type[Payload] = None
 
         # Profiler Context
         self.profile_context = ProfileContext()
 
         # Distributed Tracer
-        # self.tracer = DistributedTracer(
-        #     config=self.config,
-        #     provider=self.cloud_provider,
-        #     context=self.profile_context)
+        self.tracer: Type[DistributedTracer] = None
 
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
@@ -102,7 +92,11 @@ class Profiler(Loggable):
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        # self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
+        self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
+
+        self.tracer = DistributedTracer(
+            payload=self.payload)
+
         # with self.tracer.start(self.payload):
         self._start(function_args=(args, kwargs))
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
