@@ -1,42 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Module for cpu measurements:
-- Usage
+Module for cpu measurements
 """
 
-import logging
 import psutil
 
 from typing import List, Type
 from time import time
 from dataclasses import asdict
 
-from faas_profiler_python.measurements.base import PeriodicMeasurement, register_with_name
+from faas_profiler_python.measurements import PeriodicMeasurement
 from faas_profiler_python.config import ProfileContext, MeasuringPoint, average_measuring_points
 
 
-@register_with_name("CPU::Usage")
 class Usage(PeriodicMeasurement):
 
-    _logger = logging.getLogger("CPU::Usage")
-    _logger.setLevel(logging.INFO)
-
-    def setUp(
+    def initialize(
         self,
-        profiler_context: Type[ProfileContext],
-        config: dict = {}
+        profile_context: Type[ProfileContext],
+        parameters: dict = {}
     ) -> None:
-        self.include_children = config.get("include_children", True)
+        self.include_children = parameters.get("include_children", True)
 
-        self._own_process_id = profiler_context.measurement_process_pid
+        self._own_process_id = profile_context.measurement_process_pid
         self._measuring_points: List[MeasuringPoint] = []
         self._average_usage = 0
 
         try:
-            self.process = psutil.Process(profiler_context.pid)
+            self.process = psutil.Process(profile_context.pid)
         except psutil.Error as err:
-            self._logger.warn(f"Could not set process: {err}")
+            self.logger.warn(f"Could not set process: {err}")
 
     def start(self) -> None:
         self._append_new_cpu_measurement()
@@ -44,15 +38,15 @@ class Usage(PeriodicMeasurement):
     def measure(self):
         self._append_new_cpu_measurement()
 
-    def tearDown(self) -> None:
+    def deinitialize(self) -> None:
         self._average_usage = average_measuring_points(self._measuring_points)
 
         del self.process
 
     def results(self) -> dict:
         return {
-            "measuringPoints": list(map(asdict, self._measuring_points)),
-            "averageUsage": self._average_usage
+            "measuring_points": list(map(asdict, self._measuring_points)),
+            "average_usage": self._average_usage
         }
 
     def _append_new_cpu_measurement(self):
