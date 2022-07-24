@@ -4,20 +4,25 @@
 TODO:
 """
 
-import logging
-import traceback
-
-from typing import List, Type, Callable, Any
+from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
 
-from faas_profiler_python.captures.base import Capture
-from faas_profiler_python.measurements import MeasurementProcess, MeasurementGroup
+# from faas_profiler_python.captures.base import Capture
+# from faas_profiler_python.measurements import MeasurementProcess, MeasurementGroup
+
+
 from faas_profiler_python.config import ProfileConfig, ProfileContext, MeasuringState, Provider
-from faas_profiler_python.exporter import ResultsCollector, Exporter
-from faas_profiler_python.patchers import unpatch_modules
-from faas_profiler_python.payload import Payload
-from faas_profiler_python.tracer import DistributedTracer
+from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
+# from faas_profiler_python.exporter import ResultsCollector, Exporter
+
+
+# from faas_profiler_python.payload import Payload
+# from faas_profiler_python.tracer import DistributedTracer
+
+from faas_profiler_python.captures import Capture
+from faas_profiler_python.core import BatchExecution, PeriodicProcess, split_plugin_list_by_subclass
+from faas_profiler_python.utilis import Loggable
 
 
 def profile(config_file: str = None):
@@ -43,48 +48,50 @@ def profile(config_file: str = None):
     return function_profiler
 
 
-class Profiler:
-
-    _logger = logging.getLogger("Profiler")
-    _logger.setLevel(logging.INFO)
+class Profiler(Loggable):
 
     def __init__(self, config_file: str = None) -> None:
+        super().__init__()
         # Load user configuration
         self.config = ProfileConfig.load_file(config_file)
+
+        # Load all requested plugins
+        # captures = Capture.load(self.config.captures)
+        measurements = Measurement.load(self.config.measurements)
+
+        self.periodic_measurements, self.default_measurements = split_plugin_list_by_subclass(
+            measurements, PeriodicMeasurement)
+
+        self.periodic_batch = BatchExecution(self.periodic_measurements)
+        self.default_batch = BatchExecution(self.default_measurements)
 
         # Determine Cloud Provider: TODO: Make this dynamic
         self.cloud_provider = Provider.AWS
 
         # Payload
-        self.payload: Type[Payload] = None
+        # self.payload: Type[Payload] = None
 
         # Profiler Context
         self.profile_context = ProfileContext()
 
         # Distributed Tracer
-        self.tracer = DistributedTracer(
-            config=self.config,
-            provider=self.cloud_provider,
-            context=self.profile_context)
+        # self.tracer = DistributedTracer(
+        #     config=self.config,
+        #     provider=self.cloud_provider,
+        #     context=self.profile_context)
 
-        # Measurements
-        self.default_measurements: Type[MeasurementGroup] = None
-        self.periodic_measurements: Type[MeasurementGroup] = None
+        # Captures
+        # self.active_captures: List[Type[Capture]] = []
 
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
 
-        self._make_measurement_groups()
-
-        # Captures
-        self.active_captures: List[Type[Capture]] = []
-
         # Measurement process for peridic measurements
         self.child_endpoint: Type[connection.Connection] = None
         self.parent_endpoint: Type[connection.Connection] = None
-        self.measurement_process: Type[MeasurementProcess] = None
+        self.periodic_process: Type[PeriodicProcess] = None
 
-        self._logger.info((
+        self.logger.info((
             "[PROFILER PLAN]: \n"
             f"- Measurements: {self.config.measurements} \n"
             f"- Captures: {self.config.captures} \n"
@@ -96,33 +103,33 @@ class Profiler:
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
-        with self.tracer.start(self.payload):
-            self._start(payload=(args, kwargs))
-            self._logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
+        # self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
+        # with self.tracer.start(self.payload):
+        self._start(function_args=(args, kwargs))
+        self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
 
-            try:
-                func_ret = func(*args, **kwargs)
-            except Exception as ex:
-                self._logger.error(f"Function not successfully executed: {ex}")
-                func_ret = None
-            finally:
-                self._logger.info("-- FUNCTION EXCUTED --")
-                self._stop(payload=(args, kwargs), func_return=func_ret)
+        try:
+            func_ret = func(*args, **kwargs)
+        except Exception as ex:
+            self.logger.error(f"Function not successfully executed: {ex}")
+            func_ret = None
+        finally:
+            self.logger.info("-- FUNCTION EXCUTED --")
+            self._stop(payload=(args, kwargs), func_return=func_ret)
 
-            self.export()
+        self.export()
 
         return func_ret
 
-    def _start(self, payload: tuple) -> None:
+    def _start(self, function_args: tuple) -> None:
         """
         Starts the profiling.
 
         Internal use only. Use __call__ to start a new profile run.
         """
-        self._logger.info("Profiler run started.")
+        self.logger.info("[PROFILER] Profiler run started.")
 
-        self._start_capturing()
+        # self._start_capturing()
         self._start_default_measurements()
         self._start_periodic_measurements()
 
@@ -132,119 +139,120 @@ class Profiler:
 
         Internal use only. Use __call__ to stop a new profile run.
         """
-        self._logger.info("Profile run stopped.")
+        self.logger.info("Profile run stopped.")
         self._stop_periodic_measurements()
         self._stop_default_measurements()
-        self._stop_capturing()
+        # self._stop_capturing()
 
-        if self.measurement_process:
-            self.measurement_process.join()
-            self._terminate_measuring_process()
+        if self.periodic_process:
+            self.periodic_process.join()
+            self._terminate_peridoic_process()
 
     def export(self):
         """
         Exports the profiling data.
         """
-        if not self.config.exporters:
-            self._logger.warn("No exporters defined. Will discard results.")
-            return
+        # if not self.config.exporters:
+        #     self.logger.warn("No exporters defined. Will discard results.")
+        #     return
 
-        results_collector = ResultsCollector(
-            config=self.config,
-            profile_context=self.profile_context,
-            captures=self.active_captures)
+        # results_collector = ResultsCollector(
+        #     config=self.config,
+        #     profile_context=self.profile_context,
+        #     captures=self.active_captures)
 
-        for config_item in self.config.exporters:
-            try:
-                exporter = Exporter.factory(config_item.name)
-            except ValueError:
-                self._logger.error(
-                    f"No exporter found with name {config_item.name}")
-                continue
+        # for config_item in self.config.exporters:
+        #     try:
+        #         exporter = Exporter.factory(config_item.name)
+        #     except ValueError:
+        #         self.logger.error(
+        #             f"No exporter found with name {config_item.name}")
+        #         continue
 
-            try:
-                exporter(
-                    self.profile_context,
-                    config_item.parameters).dump(results_collector)
-            except Exception as err:
-                self._logger.error(
-                    f"Exporting results with {config_item.name} failed: {err}")
+        #     try:
+        #         exporter(
+        #             self.profile_context,
+        #             config_item.parameters).dump(results_collector)
+        #     except Exception as err:
+        #         self.logger.error(
+        #             f"Exporting results with {config_item.name} failed: {err}")
 
     # Private methods
 
-    def _make_measurement_groups(self):
-        self.default_measurements, self.periodic_measurements = MeasurementGroup.make_groups(
-            measurement_list=self.config.measurements)
-
     def _start_default_measurements(self):
-        if not self.default_measurements:
+        """
+        Starts all default measurements
+        """
+
+        if not self.default_batch:
             return
 
-        try:
-            self.default_measurements.setUp_all(self.profile_context)
-            self.default_measurements.start_all()
-            self._default_measurements_started = True
+        self.logger.info(
+            "[DEFAULT MEASUREMENTS]: Initializing and starting.")
 
-            self._logger.info(
-                "[DEFAULT MEASUREMENTS]: All set up and started.")
-        except Exception as err:
-            self._default_measurements_started = False
-
-            self._logger.error(
-                f"[DEFAULT MEASUREMENTS]: Initializing/Setting up failed: {err}, Traceback: {traceback.format_exc()}")
+        self.default_batch.initialize(self.profile_context)
+        self.default_batch.start()
+        self._default_measurements_started = True
 
     def _start_periodic_measurements(self):
+        """
+        Starts all periodic measurements by creating a process with the batch execution
+        """
         if not self.periodic_measurements:
             return
 
         self.child_endpoint, self.parent_endpoint = Pipe()
-        self.measurement_process = MeasurementProcess(
-            measurement_group=self.periodic_measurements,
+        self.periodic_process = PeriodicProcess(
+            batch=self.periodic_batch,
             profile_context=self.profile_context,
             child_connection=self.child_endpoint,
             parent_connection=self.parent_endpoint)
 
-        self._logger.info(
-            f"[PERIODIC MEASUREMENT]: Starting process: {self.measurement_process}")
-        self.measurement_process.start()
+        self.logger.info(
+            f"[PERIODIC MEASUREMENT]: Starting process: {self.periodic_process}")
+        self.periodic_process.start()
 
         try:
-            self.measurement_process.wait_for_state(MeasuringState.STARTED)
+            self.periodic_process.wait_for_state(MeasuringState.STARTED)
             self._periodic_measurements_started = True
 
-            self._logger.info(
+            self.logger.info(
                 "[PERIODIC MEASUREMENT]: All set up and started.")
         except Exception as err:
-            self._terminate_measuring_process()
+            self._terminate_peridoic_process()
             self._periodic_measurements_started = False
 
-            self._logger.error(
+            self.logger.error(
                 f"[PERIODIC MEASUREMENT]: Initializing/Setting up failed: {err}")
 
     def _stop_default_measurements(self):
-        if not self.default_measurements:
+        """
+        Stops all default measurements
+        """
+
+        if not self.default_batch:
             return
 
         if not self._default_measurements_started:
-            self._logger.warn(
+            self.logger.warn(
                 "[DEFAULT MEASUREMENTS]: Attempts to stop measurements before they are successfully started. Skipping.")
             return
 
-        try:
-            self.default_measurements.stop_all()
-            self.default_measurements.tearDown_all()
-            self._logger.info(
-                "[DEFAULT MEASUREMENTS]: All stopped and terminated")
-        except Exception as err:
-            self._logger.error(
-                f"[DEFAULT MEASUREMENTS]: Stopping and shutting down failed: {err}, Traceback: {traceback.format_exc()}")
+        self.logger.info(
+            "[DEFAULT MEASUREMENTS]: Stopping and deinitializing default measurements")
+
+        self.default_batch.stop()
+        self.default_batch.deinitialize()
 
     def _stop_periodic_measurements(self):
-        if not self.measurement_process:
+        """
+        Stops all periodic measurements.
+        """
+        if not self.periodic_process:
             return
 
         if not self._periodic_measurements_started:
-            self._logger.warn(
+            self.logger.warn(
                 "[PERIODIC MEASUREMENTS]: Attempts to stop measurements before they are successfully started. Skipping.")
             return
 
@@ -252,48 +260,48 @@ class Profiler:
         self.parent_endpoint.send(MeasuringState.STOPPED)
 
         try:
-            self.measurement_process.wait_for_state(MeasuringState.STOPPED)
-            self._logger.info(
+            self.periodic_process.wait_for_state(MeasuringState.STOPPED)
+            self.logger.info(
                 "[PERIODIC MEASUREMENT]: All stopped and terminated")
         except Exception as err:
-            self._logger.error(
+            self.logger.error(
                 f"[DEFAULT MEASUREMENTS]: Stopping and shutting down failed: {err}")
 
-    def _terminate_measuring_process(self):
+    def _terminate_peridoic_process(self):
         """
-        TODO:
+        Terminate periodic process
         """
-        if self.measurement_process and self.measurement_process.is_alive():
-            self._logger.info(
-                f"Terminated Measuring process: {self.measurement_process}")
-            self.measurement_process.terminate()
+        if self.periodic_process and self.periodic_process.is_alive():
+            self.logger.info(
+                f"Terminated Measuring process: {self.periodic_process}")
+            self.periodic_process.terminate()
 
         if self.parent_endpoint and not self.parent_endpoint.closed:
-            self._logger.info(f"Closed parent pipe: {self.parent_endpoint}")
+            self.logger.info(f"Closed parent pipe: {self.parent_endpoint}")
             self.parent_endpoint.close()
 
         if self.child_endpoint and not self.parent_endpoint.closed:
-            self._logger.info(f"Closed child pipe: {self.child_endpoint}")
+            self.logger.info(f"Closed child pipe: {self.child_endpoint}")
             self.child_endpoint.close()
 
-    def _start_capturing(self):
-        for capture_conf in self.config.captures:
-            try:
-                capture_class = Capture.factory(capture_conf.name)
-            except ValueError:
-                self._logger.warn(
-                    f"[CAPTURES]: Could not find a capture with name: {capture_conf.name}")
-            else:
-                capture = capture_class(capture_conf.parameters)
-                capture.start()
+    # def _start_capturing(self):
+    #     for capture_conf in self.config.captures:
+    #         try:
+    #             capture_class = Capture.factory(capture_conf.name)
+    #         except ValueError:
+    #             self.logger.warn(
+    #                 f"[CAPTURES]: Could not find a capture with name: {capture_conf.name}")
+    #         else:
+    #             capture = capture_class(capture_conf.parameters)
+    #             capture.start()
 
-                self.active_captures.append(capture)
-        self._logger.info("[CAPTURES]: Started all captures")
+    #             self.active_captures.append(capture)
+    #     self.logger.info("[CAPTURES]: Started all captures")
 
-    def _stop_capturing(self):
-        for patcher in self.active_captures:
-            patcher.stop()
-        self._logger.info("[CAPTURES]: Stopped all captures")
+    # def _stop_capturing(self):
+    #     for patcher in self.active_captures:
+    #         patcher.stop()
+    #     self.logger.info("[CAPTURES]: Stopped all captures")
 
-        unpatch_modules()
-        self._logger.info("[CAPTURES]: Unpatched all modules.")
+    #     unpatch_modules()
+    #     self.logger.info("[CAPTURES]: Unpatched all modules.")
