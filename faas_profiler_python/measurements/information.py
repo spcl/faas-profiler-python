@@ -10,21 +10,16 @@ import sys
 import platform
 import os
 import pkg_resources
-import logging
 import psutil
 
 from typing import Type
 from datetime import datetime
 
-from faas_profiler_python.measurements.base import Measurement, register_with_name
+from faas_profiler_python.measurements import Measurement
 from faas_profiler_python.config import ProfileContext
 
 
-@register_with_name("Information::Environment")
 class Environment(Measurement):
-
-    _logger = logging.getLogger("Information::Environment")
-    _logger.setLevel(logging.INFO)
 
     def results(self) -> dict:
         return {
@@ -50,7 +45,6 @@ class Environment(Measurement):
             return []
 
 
-@register_with_name("Information::OperatingSystem")
 class OperatingSystem(Measurement):
 
     def results(self) -> dict:
@@ -68,32 +62,14 @@ class OperatingSystem(Measurement):
         return f"{bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}"
 
 
-@register_with_name("Information::Payload")
 class Payload(Measurement):
 
-    def setUp(
+    def initialize(
         self,
-        profiler_context: Type[ProfileContext],
-        config: dict = {}
+        profile_context: Type[ProfileContext],
+        parameters: dict = {}
     ) -> None:
-        self.profiler_context = profiler_context
+        self.profile_context = profile_context
 
     def results(self) -> dict:
-        payload_event = self.profiler_context.payload_event
-        payload_context = self.profiler_context.payload_context
-        environment_variables = self.profiler_context.environment_variables
-        return {
-            "event": {
-                "type": payload_event.event_type,
-                "size": payload_event.size,
-                "content": payload_event.event
-            },
-            "context": {
-                "size": payload_context.size,
-                "content": payload_context.context
-            },
-            "environment": {
-                "size": sys.getsizeof(environment_variables),
-                "content": environment_variables
-            }
-        }
+        return {}

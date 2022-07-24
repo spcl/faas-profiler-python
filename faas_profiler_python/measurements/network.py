@@ -6,26 +6,21 @@ Module for network measurements:
 - NetworkIOCounters
 """
 
-import logging
 import psutil
 
 from typing import List, Set, Type
 from functools import reduce
 
-from faas_profiler_python.measurements.base import PeriodicMeasurement, register_with_name
+from faas_profiler_python.measurements import PeriodicMeasurement
 from faas_profiler_python.config import ProfileContext
 
 
-@register_with_name("Network::Connections")
 class Connections(PeriodicMeasurement):
 
-    _logger = logging.getLogger("Network::Connections")
-    _logger.setLevel(logging.INFO)
-
-    def setUp(
+    def initialize(
         self,
-        profiler_context: Type[ProfileContext],
-        config: dict = {}
+        profile_context: Type[ProfileContext],
+        parameters: dict = {}
     ) -> None:
         self.process = None
         self.connections: List[psutil._common.pconn] = []
@@ -34,7 +29,7 @@ class Connections(PeriodicMeasurement):
         self._results = {}
 
         try:
-            self.process = psutil.Process(profiler_context.pid)
+            self.process = psutil.Process(profile_context.pid)
         except psutil.Error as err:
             self._logger.warn(f"Could not set process: {err}")
 
@@ -44,7 +39,7 @@ class Connections(PeriodicMeasurement):
     def measure(self):
         self._update_connection()
 
-    def tearDown(self) -> None:
+    def deinitialize(self) -> None:
 
         self._results = {"connections": [{
             "socket_descriptor": conn.fd,
@@ -72,14 +67,14 @@ class Connections(PeriodicMeasurement):
         return self._results
 
 
-@register_with_name("Network::IOCounters")
 class IOCounters(PeriodicMeasurement):
-    def setUp(
+
+    def initialize(
         self,
-        profiler_context: Type[ProfileContext],
-        config: dict = {}
+        profile_context: Type[ProfileContext],
+        parameters: dict = {}
     ) -> None:
-        self.per_interface = config.get("per_interface", False)
+        self.per_interface = parameters.get("per_interface", False)
 
         self.start_snapshot: Type[psutil.snetio] = None
         self.end_snapshot: Type[psutil.snetio] = None
