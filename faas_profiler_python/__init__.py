@@ -4,11 +4,10 @@
 FaaS-Profiler for python package
 """
 
-from .measurements import * # noqa
-from .profiler import * # noqa
-from .config import * # noqa
 import logging
 import sys
+
+from faas_profiler_python.profiler import profile, Profiler  # noqa
 
 logging.basicConfig(stream=sys.stdout)
 
