@@ -1,34 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Module for common measurements:
-- WallTime
+Module for common measurements
 """
 
 from time import time
 from typing import Type
 
-from faas_profiler_python.measurements.base import PeriodicMeasurement, register_with_name
+from faas_profiler_python.measurements import Measurement
 from faas_profiler_python.config import ProfileContext
 
 
-@register_with_name("Common::WallTime")
-class WallTime(PeriodicMeasurement):
+class WallTime(Measurement):
     """
     Measures the execution time of the function using the Python standard time library.
 
     The measurement runs in the same process as the function.
     """
 
-    def setUp(
+    def initialize(
         self,
-        profiler_context: Type[ProfileContext],
-        config: dict = {}
+        profile_context: Type[ProfileContext],
+        parameters: dict = {}
     ) -> None:
         self.start_time: float = None
         self.end_time: float = None
-
-        self._results = {}
 
     def start(self) -> None:
         self.start_time = time()
@@ -36,11 +32,7 @@ class WallTime(PeriodicMeasurement):
     def stop(self) -> None:
         self.end_time = time()
 
-    def tearDown(self):
-        self._results = {"wallTime": self.end_time - self.start_time}
-
-        del self.start_time
-        del self.end_time
-
     def results(self) -> dict:
-        return self._results
+        return {
+            "wall_time": self.end_time - self.start_time
+        }
