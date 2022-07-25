@@ -6,60 +6,46 @@ Patcher for IO botocore.
 
 from __future__ import annotations
 
-import io
+from typing import Type
 
-from dataclasses import dataclass
-from typing import Any, Callable, Type
-
-from faas_profiler_python.patchers import FunctionPatcher
+from faas_profiler_python.patchers import FunctionPatcher, InvocationContext
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
-
-
-@dataclass
-class IOCall:
-    file: str = None
-    mode: str = None
-    encoding: str = None
-
-
-@dataclass
-class IOReturn:
-    wrapper_type: io.IOBase = None
-    file: str = None
-    mode: str = None
-    encoding: str = None
 
 
 class Open(FunctionPatcher):
     module_name: str = "builtins"
     function_name: str = "open"
 
-    def before_invocation(
-        self,
-        original_func: Type[Callable],
-        instance: Any,
-        args: tuple,
-        kwargs: dict
-    ) -> Type[IOCall]:
-        file = get_arg_by_key_or_pos(args, kwargs, 0, "file")
-        mode = get_arg_by_key_or_pos(args, kwargs, 1, "mode")
-        encoding = get_arg_by_key_or_pos(args, kwargs, 3, "encoding")
-
-        return IOCall(str(file), str(mode), str(encoding))
-
-    def after_invocation(
+    def extract_context(
             self,
-            response: Any,
-            error: Any = None) -> Type[IOReturn]:
-        if not hasattr(response, "__class__"):
-            return
+            invocation_context: Type[InvocationContext]) -> None:
 
-        io_class = response.__class__
-        if not issubclass(io_class, io.IOBase):
-            return
+        file = get_arg_by_key_or_pos(
+            invocation_context.original_args,
+            invocation_context.original_kwargs,
+            0,
+            "file")
+        mode = get_arg_by_key_or_pos(
+            invocation_context.original_args,
+            invocation_context.original_kwargs,
+            1,
+            "mode")
+        in_encoding = get_arg_by_key_or_pos(
+            invocation_context.original_args,
+            invocation_context.original_kwargs,
+            3,
+            "encoding")
 
-        return IOReturn(
-            wrapper_type=io_class,
-            file=str(getattr(response, "name", None)),
-            mode=str(getattr(response, "mode", None)),
-            encoding=str(getattr(response, "encoding", None)))
+        out_encoding = None
+        if invocation_context.response:
+            out_encoding = str(
+                getattr(
+                    invocation_context.response,
+                    "encoding",
+                    None))
+
+        invocation_context.set_tags({
+            "file": str(file),
+            "mode": str(mode),
+            "encoding": in_encoding if in_encoding else out_encoding
+        })

@@ -5,31 +5,16 @@ Patcher for AWS botocore.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Callable, Type, Any
+from typing import Type
 
-from faas_profiler_python.patchers import FunctionPatcher
-from faas_profiler_python.utilis import decode_base64_json_to_dict, encode_dict_to_base64_json, get_arg_by_key_or_pos
+from faas_profiler_python.patchers import FunctionPatcher, InvocationContext, PatchEvent
+from faas_profiler_python.utilis import (
+    decode_base64_json_to_dict,
+    encode_dict_to_base64_json,
+    get_arg_by_key_or_pos
+)
 
-
-@dataclass
-class AWSApiCall:
-    service: str = None
-    operation: str = None
-    endpoint_url: str = None
-    region_name: str = None
-    api_params: dict = None
-    http_uri: str = None
-    http_method: str = None
-
-
-@dataclass
-class AWSApiResponse:
-    request_id: str = None
-    http_code: int = None
-    retry_attempts: int = None
-    content_type: str = None
-    content_length: int = None
+from faas_profiler_python.aws import AWSServices
 
 
 class BotocoreAPI(FunctionPatcher):
@@ -37,39 +22,68 @@ class BotocoreAPI(FunctionPatcher):
     submodules: str = ["client"]
     function_name: str = "BaseClient._make_api_call"
 
-    INJECTABLE_SERVICES = ['lambda', 'sns', 'sqs', 'cloudwatch']
+    INJECTABLE_SERVICES = [AWSServices.Lambda]
 
-    def before_invocation(
-        self,
-        original_func: Type[Callable],
-        instance: Any,
-        args: tuple,
-        kwargs: dict
-    ) -> Type[AWSApiCall]:
-        service = self._get_service(instance)
+    def extract_context(
+            self,
+            invocation_context: Type[InvocationContext]) -> None:
 
-        meta = getattr(instance, "meta", None)
+        service = self._get_service(invocation_context.instance)
+        meta = getattr(invocation_context.instance, "meta", None)
 
         operation = get_arg_by_key_or_pos(
-            args, kwargs, 0, "operation_name") if args else None
+            invocation_context.original_args,
+            invocation_context.original_kwargs,
+            pos=0,
+            kw="operation_name",
+            default='unidentified')
         api_params = get_arg_by_key_or_pos(
-            args, kwargs, 1, "api_params") if args else None
+            invocation_context.original_args,
+            invocation_context.original_kwargs,
+            pos=1,
+            kw="api_params",
+            default='{}')
 
         http_method, http_uri = self._get_http_info(meta, operation)
 
-        return AWSApiCall(
-            service=str(service).lower(),
-            operation=str(operation).lower(),
-            endpoint_url=getattr(meta, "endpoint_url"),
-            region_name=getattr(meta, "region_name"),
-            api_params=api_params,
-            http_uri=http_uri,
-            http_method=http_method)
+        response_ctx = {}
+        if invocation_context.response:
+            response_ctx = {
+                "request_id": invocation_context.response.get(
+                    "ResponseMetadata",
+                    {}).get("RequestId"),
+                "http_code": invocation_context.response.get(
+                    "ResponseMetadata",
+                    {}).get("HTTPStatusCode"),
+                "retry_attempts": invocation_context.response.get(
+                    "ResponseMetadata",
+                    {}).get("RetryAttempts"),
+                "content_type": invocation_context.response.get("ContentType"),
+                "content_length": invocation_context.response.get("ContentLength"),
+            }
+
+        if response_ctx.get("request_id"):
+            invocation_context.set_identifier(
+                "request_id", response_ctx.get("request_id"))
+            self._set_service_specific_identifiers(
+                invocation_context, service, api_params)
+
+        invocation_context.set_tags({
+            "service": service,
+            "operation": operation,
+            "endpoint_url": getattr(meta, "endpoint_url"),
+            "region_name": getattr(meta, "region_name"),
+            "api_params": api_params,
+            "http_method": http_method,
+            "http_uri": http_uri,
+            **response_ctx
+        })
+
+        return super().extract_context(invocation_context)
 
     def modify_function_args(
         self,
-        function_args: tuple,
-        aws_api_call: Type[AWSApiCall] = None
+        patch_event: Type[PatchEvent]
     ) -> None:
         """
         Modifies the function arguments to inject a trace context (In place).
@@ -78,45 +92,40 @@ class BotocoreAPI(FunctionPatcher):
             self.logger.warn("Skipping injection. No tracer defined.")
             return
 
-        if aws_api_call is None:
+        service = self._get_service(patch_event.instance)
+
+        if service not in self.INJECTABLE_SERVICES:
             self.logger.warn(
-                "Skipping injection. No AWS API call result defined.")
+                f"Ignored AWS API call to {service}. Cannot inject.")
             return
 
-        if aws_api_call.service not in self.INJECTABLE_SERVICES:
-            self.logger.warn(
-                f"Ignored AWS API call to {aws_api_call.service}. Cannot inject.")
-            return
-
-        call_args, call_kwargs = function_args
-        if call_args is None:
+        if patch_event.args is None:
             self._logger.error("Cannot inject function with no parameters")
             return
 
         api_params = get_arg_by_key_or_pos(
-            call_args, call_kwargs, 1, "api_params")
+            patch_event.args, patch_event.kwargs, 1, "api_params", {})
+        operation = get_arg_by_key_or_pos(
+            patch_event.args, patch_event.kwargs, 0, "operation_name")
 
-        # Lambda Invocation (sync and async)
-        if aws_api_call.service == "lambda" and aws_api_call.operation == "invoke":
+        # Lambda Invocaction (sync and async)
+        if service == AWSServices.Lambda and operation == "Invoke":
             self._inject_lambda_call(
                 api_params, self._tracer.context.to_injectable())
 
-    def after_invocation(self, response: Any, error: Any = None) -> Any:
-        if response is None:
-            return AWSApiResponse()
-
-        # TODO: Handle error
-
-        return AWSApiResponse(
-            request_id=response.get("ResponseMetadata", {}).get("RequestId"),
-            http_code=response.get(
-                "ResponseMetadata",
-                {}).get("HTTPStatusCode"),
-            retry_attempts=response.get(
-                "ResponseMetadata",
-                {}).get("RetryAttempts"),
-            content_type=response.get("ContentType"),
-            content_length=response.get("ContentLength"))
+    def _set_service_specific_identifiers(
+        self,
+        invocation_context: Type[InvocationContext],
+        service: AWSServices,
+        api_params: dict = {}
+    ) -> None:
+        """
+        Set resource specific identifiers
+        """
+        if service == AWSServices.S3:
+            invocation_context.set_identifier(
+                "bucket", api_params.get("Bucket"))
+            invocation_context.set_identifier("key", api_params.get("Key"))
 
     def _get_http_info(
         self,
@@ -137,10 +146,21 @@ class BotocoreAPI(FunctionPatcher):
         return None, None
 
     def _get_service(self, instance) -> str:
+        """
+        Detects the AWS service based on the endpoint prefix
+        """
         if not hasattr(instance, "_endpoint"):
-            return
+            self.logger.error(
+                f"Could not detect service of {instance}. No _endpoint defined.")
+            return AWSServices.UNIDENTIFIED
 
-        return getattr(instance._endpoint, "_endpoint_prefix", None)
+        _prefix = getattr(instance._endpoint, "_endpoint_prefix", None)
+        try:
+            return AWSServices(_prefix)
+        except ValueError as err:
+            self.logger.error(
+                f"Could not detect service of {instance}: {err}")
+            return AWSServices.UNIDENTIFIED
 
     def _inject_lambda_call(
         self,
