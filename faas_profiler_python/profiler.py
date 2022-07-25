@@ -4,6 +4,7 @@
 TODO:
 """
 
+import os
 from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
@@ -66,7 +67,8 @@ class Profiler(Loggable):
         self.payload: Type[Payload] = None
 
         # Profiler Context
-        self.profile_context = ProfileContext()
+        self.profile_context = ProfileContext(
+            self.config, os.getpid())
 
         # Distributed Tracer
         self.tracer: Type[DistributedTracer] = None
@@ -92,13 +94,14 @@ class Profiler(Loggable):
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
+        self.profile_context.set_function(func)
+
         self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
 
         self.tracer = DistributedTracer(
             payload=self.payload)
 
-        # with self.tracer.start(self.payload):
-        self._start(function_args=(args, kwargs))
+        self._start()
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
 
         try:
@@ -108,13 +111,13 @@ class Profiler(Loggable):
             func_ret = None
         finally:
             self.logger.info("-- FUNCTION EXCUTED --")
-            self._stop(payload=(args, kwargs), func_return=func_ret)
+            self._stop()
 
         self.export()
 
         return func_ret
 
-    def _start(self, function_args: tuple) -> None:
+    def _start(self) -> None:
         """
         Starts the profiling.
 
@@ -126,7 +129,7 @@ class Profiler(Loggable):
         self._start_default_measurements()
         self._start_periodic_measurements()
 
-    def _stop(self, payload: tuple, func_return: Any) -> None:
+    def _stop(self) -> None:
         """
         Stops the profiling.
 

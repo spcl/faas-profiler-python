@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
-from collections import namedtuple
 from typing import List, Type
 from multiprocessing import Process, connection
 
@@ -12,11 +11,17 @@ import inspect
 import logging
 import traceback
 
-from faas_profiler_python.config import MeasuringState, ProcessFeedback, ProfileConfig, ProfileContext
+from faas_profiler_python.config import (
+    MeasuringState,
+    ProcessFeedback,
+    ProfileContext,
+    LoadedPlugin,
+    UnresolvedPlugin
+)
 from faas_profiler_python.utilis import Loggable, split_plugin_name
 
 
-def _load_external_plugin(requested_plugin: Type[ProfileConfig.Entity]):
+def _load_external_plugin(requested_plugin: Type[UnresolvedPlugin]):
     pass
 
 
@@ -32,9 +37,6 @@ def split_plugin_list_by_subclass(plugins, subclass):
     return (subcls_group, remainder)
 
 
-LoadedPlugin = namedtuple("LoadedPlugin", "cls parameters")
-
-
 class BasePlugin:
 
     _logger = logging.getLogger("BasePlugin")
@@ -43,7 +45,7 @@ class BasePlugin:
     @classmethod
     def load(
         cls,
-        requested_plugins: List[ProfileConfig.Entity]
+        requested_plugins: List[UnresolvedPlugin]
     ) -> List[BasePlugin]:
         """
 
@@ -189,8 +191,7 @@ class PeriodicProcess(Process):
             measurement_process_pid = os.getpid()
             self._logger.info(
                 f"Measurement process started (pid={measurement_process_pid}).")
-            self.profile_context.set_measurement_process_pid(
-                measurement_process_pid)
+            self.profile_context.periodic_process_pid = measurement_process_pid
 
             self.batch_execution.initialize(self.profile_context)
             self.batch_execution.start()
