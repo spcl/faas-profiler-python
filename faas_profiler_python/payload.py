@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Type
 
 from faas_profiler_python.aws import AWSContext, AWSEvent
-from faas_profiler_python.config import Provider, TraceContext
+from faas_profiler_python.config import Provider, TraceContext, TriggerContext
 
 
 class Payload(ABC):
@@ -48,7 +48,7 @@ class Payload(ABC):
         pass
 
     @abstractmethod
-    def extract_trigger_context(self) -> dict:
+    def extract_trigger_context(self) -> Type[TriggerContext]:
         pass
 
 
@@ -67,11 +67,11 @@ class UnresolvedPayload(Payload):
         """
         return TraceContext()
 
-    def extract_trigger_context(self) -> dict:
+    def extract_trigger_context(self) -> Type[TriggerContext]:
         """
         Returns a empty trigger context.
         """
-        return {}
+        return TriggerContext()
 
 
 class AWSPayload(Payload):
@@ -102,7 +102,7 @@ class AWSPayload(Payload):
 
         return self.context.extract_trace_context()
 
-    def extract_trigger_context(self) -> dict:
+    def extract_trigger_context(self) -> Type[TriggerContext]:
         """
         Returns context about the trigger extracted from the AWS event.
         """
