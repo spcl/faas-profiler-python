@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import inspect
 
-from typing import Any, Type
+from typing import Type
 
 from faas_profiler_python.core import BasePlugin
-from faas_profiler_python.patchers import FunctionPatcher, PatchInvocation, request_patcher
+from faas_profiler_python.patchers import FunctionPatcher, InvocationContext, request_patcher
 from faas_profiler_python.utilis import Loggable
 
 
@@ -41,9 +41,7 @@ class Capture(BasePlugin, Loggable):
 
     def capture(
         self,
-        patch_invocation: Type[PatchInvocation],
-        before_result: Any = None,
-        after_result: Any = None
+        invocation_context: Type[InvocationContext],
     ) -> None:
         pass
 

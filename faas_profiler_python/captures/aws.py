@@ -4,11 +4,14 @@
 Module for AWS invocation capturing.
 """
 
+import io
 from typing import Type
+from faas_profiler_python.aws import AWSServices
 
-from faas_profiler_python.captures import Capture, PatchInvocation
-from faas_profiler_python.patchers.botocore import AWSApiCall, AWSApiResponse, BotocoreAPI
-from faas_profiler_python.patchers.io import Open, IOCall, IOReturn
+from faas_profiler_python.captures import Capture
+from faas_profiler_python.patchers import InvocationContext
+from faas_profiler_python.patchers.botocore import BotocoreAPI
+from faas_profiler_python.patchers.io import Open
 
 
 class S3Capture(Capture):
@@ -18,30 +21,35 @@ class S3Capture(Capture):
         self.invocations = []
         return super().initialize(parameters)
 
-    def capture(
-        self,
-        patch_invocation: Type[PatchInvocation],
-        aws_api_call: Type[AWSApiCall] = None,
-        aws_api_response: Type[AWSApiResponse] = None
-    ) -> None:
-        if aws_api_response is None or aws_api_response is None:
+    def capture(self, invocation_context: Type[InvocationContext]) -> None:
+        if invocation_context.tags.get("service") != AWSServices.S3:
             return
 
-        if aws_api_call.service != "s3":
-            return
+        tags = invocation_context.tags
+        api_params = tags.get("api_params", {})
 
         self.invocations.append({
-            "operation": aws_api_call.operation,
-            "bucket": aws_api_call.api_params.get("Bucket"),
-            "key": aws_api_call.api_params.get("Key"),
-            "api_params": {str(k): str(v) for k, v in aws_api_call.api_params.items()},
-            "request_url": aws_api_call.endpoint_url,
-            "request_uri": aws_api_call.http_uri,
-            "request_method": aws_api_call.http_method,
-            "request_status": aws_api_response.http_code,
-            "size": aws_api_response.content_length,
-            "execution_time": patch_invocation.execution_time
+            "operation": tags.get("operation"),
+            "error": invocation_context.has_error,
+            "error_message": str(invocation_context.error),
+            "bucket": api_params.get("Bucket"),
+            "key": api_params.get("Key"),
+            "api_params": {str(k): str(v) for k, v in api_params.items()},
+            "request_url": tags.get("endpoint_url"),
+            "request_uri": tags.get("http_uri"),
+            "request_method": tags.get("http_method"),
+            "request_status": tags.get("http_code"),
+            "size": tags.get("content_length") or self._get_size_by_body(api_params),
+            "execution_time": invocation_context.execution_time
         })
+
+    def _get_size_by_body(self, api_params):
+        if not api_params:
+            return None
+
+        body = api_params.get("Body", None)
+        if body and isinstance(body, io.BytesIO):
+            return body.getbuffer().nbytes
 
     def results(self) -> list:
         return self.invocations
@@ -59,21 +67,17 @@ class EFSCapture(Capture):
                 "Cannot initialise EFSCapture without mounting points")
         return super().initialize(parameters)
 
-    def capture(
-        self,
-        patch_invocation: Type[PatchInvocation],
-        io_call: Type[IOCall] = None,
-        io_return: Type[IOReturn] = None
-    ) -> None:
+    def capture(self, invocation_context: Type[InvocationContext]) -> None:
         for monting_point in self.mounting_points:
-            if io_call.file.startswith(monting_point):
+            file = invocation_context.tags.get("file")
+            if file and file.startswith(monting_point):
                 self.invocations.append({
                     "efs_mount": monting_point,
-                    "file": io_call.file,
-                    "mode": self._determine_mode(io_call.mode),
-                    "encoding": io_return.encoding,
-                    "io_type": str(io_return.wrapper_type),
-                    "execution_time": patch_invocation.execution_time
+                    "file": file,
+                    "mode": self._determine_mode(invocation_context.tags.get("mode")),
+                    "encoding": invocation_context.tags.get("encoding"),
+                    # "io_type": str(io_return.wrapper_type),
+                    "execution_time": invocation_context.execution_time
                 })
 
     def results(self) -> list:
