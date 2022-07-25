@@ -11,14 +11,14 @@ from inflection import underscore
 from base64 import b64decode, b64encode
 
 
-def get_arg_by_key_or_pos(args, kwargs, pos, kw):
+def get_arg_by_key_or_pos(args, kwargs, pos, kw, default: Any = None):
     try:
         return kwargs[kw]
     except KeyError:
         try:
             return args[pos]
         except IndexError:
-            return None
+            return default
 
 
 def lowercase_keys(dict: dict) -> dict:
@@ -113,9 +113,3 @@ class Loggable:
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.INFO)
-
-
-def plugin_loader(
-
-) -> list:
-    pass
