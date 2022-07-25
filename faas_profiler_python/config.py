@@ -15,7 +15,7 @@ from os.path import dirname, join, abspath, exists
 from uuid import uuid4
 from json import load
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Type
 from functools import reduce, cached_property
 from collections import namedtuple
@@ -37,6 +37,15 @@ def get_faas_profiler_version():
         return "-"
 
 
+class TriggerSynchronicity(Enum):
+    """
+    Enumeration of different trigger synchronicities
+    """
+    UNIDENTIFIED = 'unidentified'
+    ASYNC = "async"
+    SYNC = "sync"
+
+
 class Provider(Enum):
     """
     Enumeration of different cloud providers.
@@ -44,6 +53,18 @@ class Provider(Enum):
     AWS = "aws"
     GCP = "gcp"
     AZURE = "azure"
+
+
+class Service(Enum):
+    """
+    Base class for provider services
+    """
+
+
+class Operation(Enum):
+    """
+    Base class for operations on provider services.
+    """
 
 
 class ConfigSyntaxError(SyntaxError):
@@ -323,3 +344,26 @@ class TraceContext:
             ctx[PARENT_ID_HEADER] = str(self.parent_id)
 
         return ctx
+
+
+@dataclass
+class TriggerContext:
+    provider: Provider
+    service: Service
+    operation: Operation
+    trigger_synchronicity: TriggerSynchronicity = TriggerSynchronicity.UNIDENTIFIED
+
+    identifier: dict = field(default_factory=dict)
+    tags: dict = field(default_factory=dict)
+
+    def set_identifier(self, key: Any, value: Any) -> None:
+        """
+        Sets a new context identifier
+        """
+        self.identifier[key] = value
+
+    def set_tags(self, tags: dict) -> None:
+        """
+        Merges tags into stored tags
+        """
+        self.tags.update(tags)
