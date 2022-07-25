@@ -8,15 +8,20 @@ from collections import namedtuple
 import logging
 
 from enum import Enum
-from typing import Any, Type
+from typing import Any, Tuple, Type
 
 from faas_profiler_python.utilis import lowercase_keys, get_idx_safely
 from faas_profiler_python.config import (
+    Provider,
     TraceContext,
+    TriggerContext,
+    Service,
+    Operation,
     TRACE_ID_HEADER,
     INVOCATION_ID_HEADER,
     PARENT_ID_HEADER,
-    TRACE_CONTEXT_KEY
+    TRACE_CONTEXT_KEY,
+    TriggerSynchronicity,
 )
 
 ARN = namedtuple(
@@ -74,11 +79,50 @@ class EventTypes(Enum):
     MOBILE_BACKEND = 'is_mobile_backend'
 
 
-class Services(Enum):
+class AWSServices(Service):
     """
     Enumeration of different AWS services
     """
-    pass
+    UNIDENTIFIED = 'unidentified'
+    LAMBDA = "lambda"
+    CLOUDFRONT = 'cloudfront'
+    DYNAMO_DB = 'dynamo_db'
+    CLOUD_FORMATION = 'cloud_formation'
+    SNS = 'sns'
+    SES = 'ses'
+    SQS = 'sqs'
+    S3 = "s3"
+    CODE_COMMIT = 'code_commit'
+    AWS_CONFIG = 'aws_config'
+    KINESIS = 'kinesis'
+    API_GATEWAY = 'api_gateway'
+
+
+class AWSOperation(Operation):
+    """
+    Enumeration of different AWS Operations
+    """
+    UNIDENTIFIED = 'unidentified'
+    # S3
+    S3_OBJECT_CREATE = "ObjectCreated"  # Combines: PUT, POST, COPY
+    S3_OBJECT_REMOVED = "ObjectRemoved"  # Combines: permanently and marked deleted
+
+    # Dynamo DB
+    DYNAMO_DB_UPDATE = "Update"  # Combines: INSERT, MODIFY, DELETE
+
+    # GATEWAY
+    API_GATEWAY_AWS_PROXY = 'GatewayProxy'
+    API_GATEWAY_HTTP = 'GatewayAPI'
+    API_GATEWAY_AUTHORIZER = 'GatewayAuthorizer'
+
+    # SQS
+    SQS_RECEIVE = "ReceiveMessage"
+
+    # SNS
+    SNS_TOPIC_NOTIFICATION = "TopicNotification"
+
+    # SES
+    SES_EMAIL_RECEIVE = "ReceiveEmail"
 
 
 class AWSEvent:
@@ -96,41 +140,79 @@ class AWSEvent:
             event_data = {}
 
         self.data = lowercase_keys(event_data)
-        self.type = self.resolve_event_type()
+        self.service, self.operation = self.resolve_event()
 
-    @property
-    def is_http_event(self) -> bool:
+    def resolve_event(self) -> Tuple[AWSServices, AWSOperation]:  # noqa: C901
         """
-        Returns True if event data has a http headers key.
+        Resolves the service and operation triggering this event.
         """
-        return "headers" in self.data
+        service = AWSServices.UNIDENTIFIED
+        operation = AWSOperation.UNIDENTIFIED
 
-    def resolve_event_type(self) -> EventTypes:
+        # EventTypes.CLOUDWATCH_LOGS: self._is_cloudwatch_logs,
+        # EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
+        # self._is_cloudwatch_scheduled_event,
+
+        if self._is_lambda_function_url():
+            service = AWSServices.LAMBDA
+        elif self._is_cloud_front():
+            service = AWSServices.CLOUDFRONT
+        elif self._is_dynamodb():
+            service = AWSServices.DYNAMO_DB
+            operation = AWSOperation.DYNAMO_DB_UPDATE
+        elif self._is_cloud_formation():
+            service = AWSServices.CLOUD_FORMATION
+        elif self._is_sqs():
+            service = AWSServices.SQS
+            operation = AWSOperation.SQS_RECEIVE
+        elif self._is_sns():
+            service = AWSServices.SNS
+            operation = AWSOperation.SNS_TOPIC_NOTIFICATION
+        elif self._is_ses():
+            service = AWSServices.SES
+            operation = AWSOperation.SES_EMAIL_RECEIVE
+        elif self._is_s3():
+            service = AWSServices.S3
+            operation = self._get_s3_operation()
+        elif self._is_code_commit():
+            service = AWSServices.CODE_COMMIT
+        elif self._is_aws_config():
+            service = AWSServices.AWS_CONFIG
+        elif self._is_kinesis_analytics():
+            service = AWSServices.KINESIS
+        elif self._is_kinesis_firehose():
+            service = AWSServices.KINESIS
+        elif self._is_kinesis_stream():
+            service = AWSServices.KINESIS
+        elif self._is_gateway_http():
+            service = AWSServices.API_GATEWAY
+            operation = AWSOperation.API_GATEWAY_HTTP
+        elif self._is_gateway_proxy():
+            service = AWSServices.API_GATEWAY
+            operation = AWSOperation.API_GATEWAY_AWS_PROXY
+        elif self._is_gateway_authorization():
+            service = AWSServices.API_GATEWAY
+            operation = AWSOperation.API_GATEWAY_AUTHORIZER
+
+        return service, operation
+
+    def extract_trigger_context(self) -> Type[TriggerContext]:
         """
-        Resolves the event type of the incomming lambda request.
+        Returns context about the trigger
         """
-        resolved_type = EventTypes.UNIDENTIFIED
-        for event_type, rule in self._event_resolve_rules.items():
-            if rule() is True:
-                if resolved_type != EventTypes.UNIDENTIFIED:
-                    raise RuntimeError(
-                        f"AWS Event could not be clearly determined. {resolved_type} and {event_type} match.")
+        trigger_ctx = TriggerContext(
+            Provider.AWS, self.service, self.operation)
 
-                resolved_type = event_type
+        if self.service == AWSServices.S3:
+            self._add_s3_trigger_context(trigger_ctx)
 
-        return resolved_type
-
-    def extract_trigger_context(self) -> dict:
-        return {
-            "event": self.type
-            # TODO: Add more info
-        }
+        return trigger_ctx
 
     def extract_trace_context(self) -> Type[TraceContext]:
-        if self.is_http_event:
-            return self._http_tracing_context()
-        if self.type == EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
-            return self._scheduled_event_context()
+        # if "headers" in self.data:
+        #     return self._http_tracing_context()
+        # if self.service == EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
+        #     return self._scheduled_event_context()
 
         # Default case: Return empty trace context
         return TraceContext()
@@ -164,28 +246,31 @@ class AWSEvent:
             invocation_id=context.get(INVOCATION_ID_HEADER),
             parent_id=context.get(PARENT_ID_HEADER))
 
-    # Helpers
+    def _add_s3_trigger_context(
+            self, trigger_context: Type[TriggerContext]) -> None:
+        """
+        Adds S3 specific trigger information.
+        """
+        trigger_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+        _s3_record = self._get_first_record()
+        _bucket = _s3_record.get("s3", {}).get("bucket")
+        _object = _s3_record.get("s3", {}).get("object")
 
-    @property
-    def _event_resolve_rules(self) -> dict:
-        return {
-            EventTypes.CLOUDFRONT: self._is_cloud_front,
-            EventTypes.CLOUDWATCH_LOGS: self._is_cloudwatch_logs,
-            EventTypes.CLOUDWATCH_SCHEDULED_EVENT: self._is_cloudwatch_scheduled_event,
-            EventTypes.DYNAMO_DB: self._is_dynamodb,
-            EventTypes.CLOUD_FORMATION: self._is_cloud_formation,
-            EventTypes.SQS: self._is_sqs,
-            EventTypes.SNS: self._is_sns,
-            EventTypes.SES: self._is_ses,
-            EventTypes.S3: self._is_s3,
-            EventTypes.AWS_CONFIG: self._is_aws_config,
-            EventTypes.CODE_COMMIT: self._is_code_commit,
-            EventTypes.KINESIS_FIREHOSE: self._is_kinesis_firehose,
-            EventTypes.KINESIS_ANALYTICS: self._is_kinesis_analytics,
-            EventTypes.KINESIS_STREAM: self._is_kinesis_stream,
-            EventTypes.API_GATEWAY_AWS_PROXY: self._is_gateway_proxy,
-            EventTypes.API_GATEWAY_HTTP: self._is_gateway_http,
-            EventTypes.API_GATEWAY_AUTHORIZER: self._is_gateway_authorization}
+        trigger_context.set_tags({
+            "bucket_name": _bucket.get("name"),
+            "bucket_arn": _bucket.get("arn"),
+            "object_key": _object.get("key"),
+            "object_etag": _object.get("eTag")
+        })
+
+        trigger_context.set_identifier(
+            "request_id", _s3_record.get(
+                "responseelements", {}).get("x-amz-request-id"))
+        trigger_context.set_identifier("bucket_name", _bucket.get("name"))
+        trigger_context.set_identifier("bucket_arn", _bucket.get("arn"))
+        trigger_context.set_identifier("object_key", _object.get("key"))
+
+    # Helpers
 
     def _has_records(self) -> bool:
         return 'records' in self.data and len(self.data['records']) > 0
@@ -201,6 +286,12 @@ class AWSEvent:
 
     def _get_event_source(self) -> str:
         return self._get_first_record.get('eventsource', None)
+
+    def _is_lambda_function_url(self) -> bool:
+        # request_context = lowercase_keys(self.data.get("requestcontext", {}))
+        # domain_name = request_context.get("domainname")
+
+        return False
 
     def _is_cloud_formation(self) -> bool:
         return 'stackid' in self.data and 'requesttype' in self.data and 'resourcetype' in self.data
@@ -219,6 +310,19 @@ class AWSEvent:
 
     def _is_s3(self) -> bool:
         return self._get_first_record().get("eventsource") == "aws:s3"
+
+    def _get_s3_operation(self) -> AWSOperation:
+        event_name = self._get_first_record().get("eventname")
+        if event_name is None:
+            return AWSOperation.UNIDENTIFIED
+
+        _operation = str(event_name).split(":")[0]
+        if _operation == "ObjectCreated":
+            return AWSOperation.S3_OBJECT_CREATE
+        elif _operation == "ObjectRemoved":
+            return AWSOperation.S3_OBJECT_REMOVED
+
+        return AWSOperation.UNIDENTIFIED
 
     def _is_sns(self) -> bool:
         return self._get_first_record().get("eventsource") == "aws:sns"
