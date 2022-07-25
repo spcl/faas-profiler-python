@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import importlib
 
+from dataclasses import dataclass, field
+from datetime import datetime
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from threading import Lock
@@ -29,8 +31,51 @@ ACTIVE_FUNCTION_PATCHERS = dict()
 _logger = logging.getLogger("Patchers")
 _logger.setLevel(logging.INFO)
 
-PatchInvocation = namedtuple("PatchInvocation", [
-    "module_name", "function_name", "error", "error_type", "execution_time"])
+PatchEvent = namedtuple("PatchEvent", [
+    "instance", "function", "args", "kwargs"])
+
+
+@dataclass
+class InvocationContext:
+    """
+    Base data class for all patch invocations
+    """
+    function_patcher: Type[FunctionPatcher]
+    module_name: str
+    function_name: str
+
+    instance: Any
+    original_function: Type[Callable]
+    original_args: tuple
+    original_kwargs: dict
+
+    response: Any = None
+
+    identifier: dict = field(default_factory=dict)
+    execution_time: float = None
+    invoked_at: Type[datetime] = None
+    has_error: bool = False
+    error: Type[Exception] = None
+
+    tags: dict = field(default_factory=dict)
+
+    def set_identifier(self, key: Any, value: Any) -> None:
+        """
+        Sets a new context identifier
+        """
+        self.identifier[key] = value
+
+    def set_tags(self, tags: dict) -> None:
+        """
+        Merges tags into stored tags
+        """
+        self.tags.update(tags)
+
+    def set_tag(self, key: Any, value: Any) -> None:
+        """
+        Sets a single tag.
+        """
+        self.tags[key] = value
 
 
 class FunctionPatcher(ABC, BasePlugin, Loggable):
@@ -139,7 +184,7 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
 
     def _function_wrapper(
         self,
-        original_func: Type[Callable],
+        original_function: Type[Callable],
         instance: Any,
         args: tuple,
         kwargs: dict
@@ -148,103 +193,97 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         Wrapper function for the pachted function.
         """
         if not self.active:
-            return original_func(*args, **kwargs)
+            return original_function(*args, **kwargs)
 
-        before_result = self._execute_before_invocation(
-            original_func, instance, args, kwargs)
+        invocation_context = InvocationContext(
+            function_patcher=self,
+            module_name=self._complete_module_name,
+            function_name=self.function_name,
+            instance=instance,
+            original_function=original_function,
+            original_args=args,
+            original_kwargs=kwargs)
 
         try:
             execution_start = time()
+            invocation_context.invoked_at = datetime.now()
             with self._modified_payload(
-                    function_args=(args, kwargs),
-                    before_result=before_result) as (mod_args, mod_kwargs):
-                response = original_func(*mod_args, **mod_kwargs)
-        except Exception as err:
-            execution_end = time()
+                original_function, instance, args, kwargs
+            ) as (mod_args, mod_kwargs):
+                response = original_function(*mod_args, **mod_kwargs)
+        except Exception as error:
+            invocation_context.execution_time = time() - execution_start
+            invocation_context.has_error = True
+            invocation_context.error = error
 
-            patch_invocation = PatchInvocation(
-                self._complete_module_name, self.function_name,
-                True, err, execution_end - execution_start)
+            self._execute_extract_context(invocation_context)
+            self._notify_captures(invocation_context)
 
-            after_result = self._execute_after_invocaton(
-                None, err)
-            self._notify_captures(
-                patch_invocation,
-                before_result,
-                after_result)
+            if self._tracer:
+                self._tracer.record_outbound_request()
 
             raise
         else:
-            execution_end = time()
+            invocation_context.execution_time = time() - execution_start
+            invocation_context.has_error = False
+            invocation_context.response = response
 
-            patch_invocation = PatchInvocation(
-                self._complete_module_name, self.function_name,
-                False, None, execution_end - execution_start)
+            self._execute_extract_context(invocation_context)
+            self._notify_captures(invocation_context)
 
-            after_result = self._execute_after_invocaton(
-                response, None)
-            self._notify_captures(
-                patch_invocation,
-                before_result,
-                after_result)
+            if self._tracer:
+                self._tracer.record_outbound_request()
 
             return response
 
-    def _notify_captures(self, patch_invocation, before_result, after_result):
+    def _notify_captures(self, invocation_context: Type[InvocationContext]):
         """
         Notifies all registered captures.
         """
         for capture in self._registered_captures:
-            capture.capture(patch_invocation, before_result, after_result)
+            try:
+                capture.capture(invocation_context)
+            except Exception as err:
+                self.logger.error(f"Notifying {capture} failed: {err}")
 
-    def _execute_before_invocation(
-            self,
-            original_func,
-            instance,
-            args,
-            kwargs) -> Any:
+    def _execute_extract_context(
+        self,
+        invocation_context: Type[InvocationContext]
+    ) -> Any:
         """
-        Safely executes the before invocation hook
+        Safely executes the extract context hook
         """
         try:
-            return self.before_invocation(
-                original_func, instance, args, kwargs)
-        except Exception as err:
-            self.logger.error(
-                f"Execution before invocation for patched function "
-                f"{self.function_name} in module {self._complete_module_name} failed: {err}")
-            return None
-
-    def _execute_after_invocaton(self, response: Any, error: Any) -> Any:
-        """
-        Safely executes the after invocation hook
-        """
-        try:
-            return self.after_invocation(response, error)
+            self.extract_context(invocation_context)
         except Exception as err:
             self.logger.error(
                 f"Execution after invocation for patched function "
                 f"{self.function_name} in module {self._complete_module_name} failed: {err}")
-            return None
 
     @contextmanager
     def _modified_payload(
-            self,
-            function_args: tuple,
-            before_result: Any = None):
+        self,
+        original_function: Type[Callable],
+        instance: Any,
+        args: tuple,
+        kwargs: dict
+    ):
         """
         Calls the tracer to modify the payload if required.
         """
         if self._tracer:
-            org_function_args = function_args
+            patch_event = PatchEvent(instance, original_function, args, kwargs)
+            org_args = tuple(args)
+            org_kwargs = dict(kwargs)
             try:
-                self.modify_function_args(function_args, before_result)
+                self.modify_function_args(patch_event)
             except Exception as err:
                 self._logger.error(
                     f"Injection failed: {err}. Take unmodified parameters.")
-                function_args = org_function_args
+                args = org_args
+                kwargs = org_kwargs
 
-        yield function_args[0], function_args[1]
+        yield args, kwargs
 
     def register_capture(self, capture) -> None:
         """
@@ -277,29 +316,17 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         self.active = False
 
     @abstractmethod
-    def before_invocation(
+    def extract_context(
         self,
-        original_func: Type[Callable],
-        instance: Any,
-        args: tuple,
-        kwargs: dict
-    ) -> Any:
+        invocation_context: Type[InvocationContext]
+    ) -> None:
         pass
 
     def modify_function_args(
         self,
-        function_args: tuple,
-        before_result: Any = None
+        patch_event: Type[PatchEvent]
     ) -> tuple:
         raise NotImplementedError
-
-    @abstractmethod
-    def after_invocation(
-        self,
-        response: Any,
-        error: Any = None
-    ) -> Any:
-        pass
 
 
 def request_patcher(
