@@ -44,6 +44,12 @@ class DistributedTracer:
         """
         return self.current_invocation_span.trace_context
 
+    def record_outbound_request(self):
+        """
+        Records the outbound request
+        """
+        print("recorded")
+
     def _patch_outbound_libraries(self):
         """
         Patches all outbound libraries
@@ -89,22 +95,29 @@ class InvocationSpan:
                 "No invocation id found. Treating Span as root span.")
 
         return cls(
+            payload=payload,
             trace_id=trace_id,
             parent_id=parent_id)
 
     def __init__(
         self,
+        payload: Type[Payload],
         trace_id: str = None,
         parent_id: str = None,
     ) -> None:
+        self.payload = payload
         self.trace_id = trace_id if trace_id else uuid4()
         self.invocation_id = uuid4()
         self.parent_id = parent_id
 
         self._trace_context = TraceContext(
             self.trace_id, self.invocation_id, self.parent_id)
+        self._trigger_context = self.payload.extract_trigger_context()
 
         self._logger.info(f"NEW SPAN: {self}")
+        self._logger.info(f"Extracted Trace Context: {self._trace_context}")
+        self._logger.info(
+            f"Extracted Trigger Context: {self._trigger_context}")
 
     def __str__(self) -> str:
         return f"[trace_id={self.trace_id}, invocation_id={self.invocation_id}, parent_id={self.parent_id}]"
@@ -122,4 +135,7 @@ class InvocationSpan:
 
     @property
     def trigger_context(self) -> Any:
-        return None
+        """
+        Returns the trigger context of this span
+        """
+        return self._trigger_context
