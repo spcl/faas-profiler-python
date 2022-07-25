@@ -22,7 +22,7 @@ class BotocoreAPI(FunctionPatcher):
     submodules: str = ["client"]
     function_name: str = "BaseClient._make_api_call"
 
-    INJECTABLE_SERVICES = [AWSServices.Lambda]
+    INJECTABLE_SERVICES = [AWSServices.LAMBDA]
 
     def extract_context(
             self,
@@ -109,7 +109,7 @@ class BotocoreAPI(FunctionPatcher):
             patch_event.args, patch_event.kwargs, 0, "operation_name")
 
         # Lambda Invocaction (sync and async)
-        if service == AWSServices.Lambda and operation == "Invoke":
+        if service == AWSServices.LAMBDA and operation == "Invoke":
             self._inject_lambda_call(
                 api_params, self._tracer.context.to_injectable())
 
@@ -124,8 +124,8 @@ class BotocoreAPI(FunctionPatcher):
         """
         if service == AWSServices.S3:
             invocation_context.set_identifier(
-                "bucket", api_params.get("Bucket"))
-            invocation_context.set_identifier("key", api_params.get("Key"))
+                "bucket_name", api_params.get("Bucket"))
+            invocation_context.set_identifier("object_key", api_params.get("Key"))
 
     def _get_http_info(
         self,
