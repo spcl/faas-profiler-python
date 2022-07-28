@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Type
 
 from faas_profiler_python.aws import AWSContext, AWSEvent
-from faas_profiler_python.config import Provider, TraceContext, TriggerContext
+from faas_profiler_python.config import Provider, TracingContext, InboundContext
 
 
 class Payload(ABC):
@@ -44,11 +44,11 @@ class Payload(ABC):
             return UnresolvedPayload(*payload[0], **payload[1])
 
     @abstractmethod
-    def extract_tracing_context(self) -> Type[TraceContext]:
+    def extract_tracing_context(self) -> Type[TracingContext]:
         pass
 
     @abstractmethod
-    def extract_trigger_context(self) -> Type[TriggerContext]:
+    def extract_inbound_context(self) -> Type[InboundContext]:
         pass
 
 
@@ -61,17 +61,17 @@ class UnresolvedPayload(Payload):
         self.args = args
         self.kwargs = kwargs
 
-    def extract_tracing_context(self) -> Type[TraceContext]:
+    def extract_tracing_context(self) -> Type[TracingContext]:
         """
         Return a empty trace context.
         """
-        return TraceContext()
+        return TracingContext()
 
-    def extract_trigger_context(self) -> Type[TriggerContext]:
+    def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Returns a empty trigger context.
         """
-        return TriggerContext()
+        return InboundContext()
 
 
 class AWSPayload(Payload):
@@ -90,7 +90,7 @@ class AWSPayload(Payload):
         self.event = AWSEvent(self.event_data)
         self.context = AWSContext(self.context_data)
 
-    def extract_tracing_context(self) -> Type[TraceContext]:
+    def extract_tracing_context(self) -> Type[TracingContext]:
         """
         Returns context about tracing extracted either from event or client context.
 
@@ -102,8 +102,8 @@ class AWSPayload(Payload):
 
         return self.context.extract_trace_context()
 
-    def extract_trigger_context(self) -> Type[TriggerContext]:
+    def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Returns context about the trigger extracted from the AWS event.
         """
-        return self.event.extract_trigger_context()
+        return self.event.extract_inbound_context()
