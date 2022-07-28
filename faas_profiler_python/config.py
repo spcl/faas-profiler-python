@@ -10,16 +10,14 @@ import pkg_resources
 import yaml
 import inspect
 
-from os.path import dirname, abspath, exists
+from os.path import abspath, exists
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Any, List, Type
+from typing import Any, Dict, List, Type
 from collections import namedtuple
 
 from faas_profiler_python.utilis import lowercase_keys
 from functools import reduce
-
-ROOT_DIR = abspath(dirname(__file__))
 
 # TODO: make case dest for AWS, local usw
 TMP_RESULT_DIR = abspath("/tmp")
@@ -88,6 +86,8 @@ class ProfileConfig:
     EXPORTERS_KEY = "exporters"
     TRACING_KEY = "tracing"
 
+    OUTBOUND_REQUESTS_TABLES_KEY = "outbound_requests_tables"
+
     @classmethod
     def load_file(cls, fp_config_file: str) -> Type[ProfileConfig]:
         cls._logger.info(f"Load configuration: {fp_config_file}")
@@ -128,6 +128,9 @@ class ProfileConfig:
 
         self._tracing = lowercase_keys(self.config.get(self.TRACING_KEY, {}))
 
+        self._outbound_requests_tables = self._parse_outbound_requests_tables(
+            self.OUTBOUND_REQUESTS_TABLES_KEY)
+
     @property
     def tracing_enabled(self) -> bool:
         """
@@ -135,6 +138,13 @@ class ProfileConfig:
         Default: False
         """
         return self._tracing.get("enabled", True)
+
+    @property
+    def outbound_requests_tables(self) -> Dict[Provider, dict]:
+        """
+        Returns a dict for each configured outbound request table with parameters
+        """
+        return self._outbound_requests_tables
 
     @property
     def measurements(self) -> List[UnresolvedPlugin]:
@@ -173,6 +183,29 @@ class ProfileConfig:
                     config_item.get("from", None)))
 
         return entities
+
+    def _parse_outbound_requests_tables(
+            self, key: str) -> Dict[Provider, dict]:
+        tables = {}
+        tables_config = self._tracing.get(key, [])
+        if not isinstance(tables_config, list):
+            raise ConfigSyntaxError(
+                f"Config of {key} must be a list, got {type(tables_config)}")
+
+        for table_config in tables_config:
+            provider_str = str(table_config.get("provider")).lower()
+            try:
+                provider = Provider(provider_str)
+            except ValueError:
+                pass
+            else:
+                if provider in tables:
+                    raise ConfigSyntaxError(
+                        f"Duplicate key for {provider}. Outbound Request Table for {provider} already defined.")
+
+                tables[provider] = table_config.get("parameters", {})
+
+        return tables
 
 
 @dataclass
