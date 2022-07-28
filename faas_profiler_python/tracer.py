@@ -4,16 +4,32 @@
 Distributed tracer module.
 """
 from __future__ import annotations
+from abc import ABC, abstractmethod
+from datetime import datetime
+import decimal
+import json
 
 import logging
+import boto3
 
 from typing import Any, Type
 from uuid import uuid4
+from boto3.dynamodb.types import TypeSerializer
+from botocore.exceptions import ClientError
 
-from faas_profiler_python.config import TraceContext
-from faas_profiler_python.patchers import request_patcher
+from faas_profiler_python.config import Provider, TraceContext
+from faas_profiler_python.patchers import (
+    InvocationContext,
+    request_patcher,
+    ignore_instance_from_patching
+)
 from faas_profiler_python.patchers.botocore import BotocoreAPI
 from faas_profiler_python.payload import Payload
+from faas_profiler_python.utilis import Loggable
+
+"""
+Distributed Tracer
+"""
 
 
 class DistributedTracer:
@@ -30,9 +46,14 @@ class DistributedTracer:
 
     def __init__(
         self,
-        payload: Type[Payload]
+        payload: Type[Payload],
+        provider: Provider,
+        outbound_requests_tables: dict = {}
     ) -> None:
         self.payload = payload
+        self.outbound_requests_table = OutboundRequestTable.factory(provider)(
+            **outbound_requests_tables.get(provider, {}))
+
         self.current_invocation_span = InvocationSpan.create_from_incoming_payload(
             self.payload)
         self.outbound_patchers = self._patch_outbound_libraries()
@@ -44,11 +65,13 @@ class DistributedTracer:
         """
         return self.current_invocation_span.trace_context
 
-    def record_outbound_request(self):
+    def record_outbound_request(
+            self, invocation_context: Type[InvocationContext]):
         """
         Records the outbound request
         """
-        print("recorded")
+        self.outbound_requests_table.store_request(
+            invocation_context, self.context)
 
     def _patch_outbound_libraries(self):
         """
@@ -63,6 +86,11 @@ class DistributedTracer:
             outbound_patchers[outbound_library] = patcher
 
         return outbound_patchers
+
+
+"""
+InvocationSpan
+"""
 
 
 class InvocationSpan:
@@ -139,3 +167,96 @@ class InvocationSpan:
         Returns the trigger context of this span
         """
         return self._trigger_context
+
+
+"""
+Outbound Request Table
+"""
+
+
+class OutboundRequestTable(ABC, Loggable):
+    """
+    Base class for a outbound request table.
+    """
+
+    @classmethod
+    def factory(cls, provider: Provider):
+        if provider == Provider.AWS:
+            return AWSOutboundRequestTable
+        else:
+            return NoopOutboundRequestTable
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
+
+    @abstractmethod
+    def store_request(
+        self,
+        invocation_context: Type[InvocationContext],
+        trace_context: Type[TraceContext]
+    ) -> None:
+        pass
+
+
+class NoopOutboundRequestTable(OutboundRequestTable):
+    """
+    Dummy Outbound Request Table for unresolved providers.
+    """
+
+    def store_request(
+        self,
+        invocation_context: Type[InvocationContext],
+        trace_context: Type[TraceContext]
+    ) -> None:
+        self.logger.warn(
+            "Skipping recording outbound request. No outbound request table defined.")
+
+
+class AWSOutboundRequestTable(OutboundRequestTable):
+    """
+    Represents a dynamoDB backed table for recording outbounding requests in AWS
+    """
+
+    def __init__(self, table_name: str, region_name: str) -> None:
+        super().__init__()
+
+        self.table_name = table_name
+        self.region_name = region_name
+
+        if self.table_name is None or self.region_name is None:
+            raise RuntimeError(
+                "Cannot initialize Outbound Request Table for AWS. Table name or region name is missing.")
+
+        self.dynamodb = boto3.client('dynamodb', region_name=self.region_name)
+        self.serializer = TypeSerializer()
+
+        ignore_instance_from_patching(self.dynamodb)
+
+    def store_request(
+        self,
+        invocation_context: Type[InvocationContext],
+        trace_context: Type[TraceContext]
+    ) -> None:
+        """
+        Stores the invocation the dynamodb table
+        """
+        request_id = uuid4()
+        record = {
+            **invocation_context.to_record(),
+            "outbound_request_id": str(request_id),
+            "timestamp": datetime.timestamp(invocation_context.invoked_at),
+            "trace_id": str(trace_context.trace_id),
+            "invocation_id": str(trace_context.invocation_id)
+        }
+        item = json.loads(json.dumps(record), parse_float=decimal.Decimal)
+        item = {
+            k: self.serializer.serialize(v) for k,
+            v in item.items() if v != ""}
+        try:
+            self.dynamodb.put_item(TableName=self.table_name, Item=item)
+        except ClientError as err:
+            self.logger.info(
+                f"Failed to record outbound request {request_id} in {self.table_name}: {err}")
+        else:
+            self.logger.info(
+                f"Successfully recorded outbound request {request_id} in {self.table_name}")
