@@ -8,18 +8,17 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 import decimal
 import json
-
-import logging
 import boto3
 
-from typing import Any, Type
+from typing import List, Type
 from uuid import uuid4
 from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 
-from faas_profiler_python.config import Provider, TraceContext
+from faas_profiler_python.config import Config, Provider, TracingContext, InboundContext
 from faas_profiler_python.patchers import (
-    InvocationContext,
+    FunctionPatcher,
+    OutboundContext,
     request_patcher,
     ignore_instance_from_patching
 )
@@ -32,13 +31,10 @@ Distributed Tracer
 """
 
 
-class DistributedTracer:
+class DistributedTracer(Loggable):
     """
     Implementation of a distributed Tracer.
     """
-
-    _logger = logging.getLogger("DistributedTracer")
-    _logger.setLevel(logging.INFO)
 
     outbound_libraries = [
         BotocoreAPI
@@ -46,127 +42,131 @@ class DistributedTracer:
 
     def __init__(
         self,
-        payload: Type[Payload],
-        provider: Provider,
-        outbound_requests_tables: dict = {}
+        config: Type[Config],
+        provider: Type[Provider] = Provider.UNIDENTIFIED
     ) -> None:
-        self.payload = payload
-        self.outbound_requests_table = OutboundRequestTable.factory(provider)(
-            **outbound_requests_tables.get(provider, {}))
+        super().__init__()
 
-        self.current_invocation_span = InvocationSpan.create_from_incoming_payload(
-            self.payload)
-        self.outbound_patchers = self._patch_outbound_libraries()
+        self.config: Type[Config] = config
+        self.provider: Type[Provider] = provider
+
+        self.payload: Type[Payload] = None
+        self._inbound_context: Type[InboundContext] = None
+        self._outbound_contexts: List[Type[OutboundContext]] = []
+        self._tracing_context: Type[TracingContext] = None
+
+        self._outbound_request_table = self._initialize_outbound_request_table()
+
+        self._active_outbound_patchers: List[Type[FunctionPatcher]] = []
+
+    """
+    Properties
+    """
 
     @property
-    def context(self) -> Type[TraceContext]:
+    def inbound_context(self) -> Type[InboundContext]:
         """
-        Returns the current trace context given by the invocation span.
+        Returns the context of the inbound request.
         """
-        return self.current_invocation_span.trace_context
+        return self._inbound_context
 
-    def record_outbound_request(
-            self, invocation_context: Type[InvocationContext]):
+    @property
+    def outbound_contexts(self) -> List[Type[OutboundContext]]:
         """
-        Records the outbound request
+        Returns a list of contexts of outbound requests.
         """
-        self.outbound_requests_table.store_request(
-            invocation_context, self.context)
+        return self._outbound_contexts
 
-    def _patch_outbound_libraries(self):
+    @property
+    def tracing_context(self) -> Type[TracingContext]:
         """
-        Patches all outbound libraries
+        Returns the context for tracing.
         """
-        outbound_patchers = {}
+        return self._tracing_context
+
+    """
+    Tracing methods
+    """
+
+    def start_tracing_outbound_requests(self):
+        """
+        Starts tracing outgoing requests by patching the libraries that make these requests.
+        """
         for outbound_library in self.outbound_libraries:
             patcher = request_patcher(outbound_library)
-            patcher.set_tracer(self)
+            patcher.register_observer(self.handle_outbound_request)
+            patcher.set_trace_context_to_inject(self.tracing_context)
             patcher.activate()
 
-            outbound_patchers[outbound_library] = patcher
+            self._active_outbound_patchers.append(patcher)
 
-        return outbound_patchers
+    def stop_tracing_outbound_requests(self):
+        """
+        Stops tracing outgoing requests by unpatching libraries.
+        """
+        pass
 
-
-"""
-InvocationSpan
-"""
-
-
-class InvocationSpan:
     """
-    Represents a lambda invocation
+    Request handling methods
     """
 
-    _logger = logging.getLogger("InvocationSpan")
-    _logger.setLevel(logging.INFO)
-
-    @classmethod
-    def create_from_incoming_payload(
-        cls,
-        payload: Type[Payload]
-    ) -> Type[InvocationSpan]:
-        parent_ctx = payload.extract_tracing_context()
-
-        trace_id = None
-        if parent_ctx.trace_id:
-            trace_id = parent_ctx.trace_id
-        else:
-            cls._logger.info(
-                "No trace id found. Creating Span with new trace id")
-
-        parent_id = None
-        if parent_ctx.invocation_id:
-            parent_id = parent_ctx.invocation_id
-        else:
-            cls._logger.info(
-                "No invocation id found. Treating Span as root span.")
-
-        return cls(
-            payload=payload,
-            trace_id=trace_id,
-            parent_id=parent_id)
-
-    def __init__(
+    def handle_inbound_request(
         self,
-        payload: Type[Payload],
-        trace_id: str = None,
-        parent_id: str = None,
+        function_args: tuple = tuple(),
+        function_kwargs: dict = {}
     ) -> None:
-        self.payload = payload
-        self.trace_id = trace_id if trace_id else uuid4()
-        self.invocation_id = uuid4()
-        self.parent_id = parent_id
-
-        self._trace_context = TraceContext(
-            self.trace_id, self.invocation_id, self.parent_id)
-        self._trigger_context = self.payload.extract_trigger_context()
-
-        self._logger.info(f"NEW SPAN: {self}")
-        self._logger.info(f"Extracted Trace Context: {self._trace_context}")
-        self._logger.info(
-            f"Extracted Trigger Context: {self._trigger_context}")
-
-    def __str__(self) -> str:
-        return f"[trace_id={self.trace_id}, invocation_id={self.invocation_id}, parent_id={self.parent_id}]"
-
-    @property
-    def is_root(self) -> bool:
-        return self.parent_id is None
-
-    @property
-    def trace_context(self) -> Type[TraceContext]:
         """
-        Returns the trace context of this span
-        """
-        return self._trace_context
+        Handles the incoming request, which is the current call of the serverless function.
 
-    @property
-    def trigger_context(self) -> Any:
+        Parameters
+        ----------
+        function_args: tuple
+            decorated function arguments
+        function_kwargs: tuple
+            decorated function keyword arguments
         """
-        Returns the trigger context of this span
+        self.payload = Payload.resolve(
+            self.provider, (function_args, function_kwargs))
+        self._inbound_context = self.payload.extract_inbound_context()
+        self._tracing_context = TracingContext.create_from_payload_tracing_context(
+            payload_tracing_context=self.payload.extract_tracing_context())
+
+        self.logger.info(f"NEW SPAN: {self._tracing_context}")
+
+    def handle_outbound_request(
+        self,
+        outbound_context: Type[OutboundContext]
+    ) -> None:
         """
-        return self._trigger_context
+        Handles outgoing requests, which are stored and sent to a database if configured.
+
+        Parameters
+        ----------
+        outbound_context: OutboundContext
+            Context of the outbound request.
+        """
+        self._outbound_request_table.store_request(
+            outbound_context, self.tracing_context)
+
+    """
+    Private methods
+    """
+
+    def _initialize_outbound_request_table(self):
+        """
+        Initializes a new Outbound Request Table based on the provider
+        """
+        try:
+            outbound_table_cls = OutboundRequestTable.factory(self.provider)
+            outbound_request_table = outbound_table_cls(
+                **self.config.outbound_requests_tables.get(self.provider, {}))
+            self.logger.info(
+                f"Initialized new Outbound Request Table {outbound_table_cls.__name__} for {self.provider}")
+            return outbound_request_table
+        except Exception as err:
+            self.logger.error(
+                f"Could not initialize Outbound Request Table for {self.provider}: {err}")
+            return NoopOutboundRequestTable()
 
 
 """
@@ -192,8 +192,8 @@ class OutboundRequestTable(ABC, Loggable):
     @abstractmethod
     def store_request(
         self,
-        invocation_context: Type[InvocationContext],
-        trace_context: Type[TraceContext]
+        invocation_context: Type[OutboundContext],
+        trace_context: Type[TracingContext]
     ) -> None:
         pass
 
@@ -205,8 +205,8 @@ class NoopOutboundRequestTable(OutboundRequestTable):
 
     def store_request(
         self,
-        invocation_context: Type[InvocationContext],
-        trace_context: Type[TraceContext]
+        invocation_context: Type[OutboundContext],
+        trace_context: Type[TracingContext]
     ) -> None:
         self.logger.warn(
             "Skipping recording outbound request. No outbound request table defined.")
@@ -234,8 +234,8 @@ class AWSOutboundRequestTable(OutboundRequestTable):
 
     def store_request(
         self,
-        invocation_context: Type[InvocationContext],
-        trace_context: Type[TraceContext]
+        invocation_context: Type[OutboundContext],
+        trace_context: Type[TracingContext]
     ) -> None:
         """
         Stores the invocation the dynamodb table
