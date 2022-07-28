@@ -6,14 +6,16 @@ FaaS-Profiler configuration
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 import pkg_resources
 import yaml
 import inspect
 
+from datetime import datetime
 from os.path import abspath, exists
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Type
+from typing import Any, Callable, Dict, List, Type
 from collections import namedtuple
 
 from faas_profiler_python.utilis import lowercase_keys
@@ -52,6 +54,7 @@ class Provider(Enum):
     """
     Enumeration of different cloud providers.
     """
+    UNIDENTIFIED = "unidentified"
     AWS = "aws"
     GCP = "gcp"
     AZURE = "azure"
@@ -73,12 +76,12 @@ class ConfigSyntaxError(SyntaxError):
     pass
 
 
-class ProfileConfig:
+class Config:
     """
     Representation of the FaaS-Profiler config file (fp_config.yml)
     """
 
-    _logger = logging.getLogger("ProfileConfig")
+    _logger = logging.getLogger("Config")
     _logger.setLevel(logging.INFO)
 
     MEASUREMENTS_KEY = "measurements"
@@ -89,7 +92,7 @@ class ProfileConfig:
     OUTBOUND_REQUESTS_TABLES_KEY = "outbound_requests_tables"
 
     @classmethod
-    def load_file(cls, fp_config_file: str) -> Type[ProfileConfig]:
+    def load_file(cls, fp_config_file: str) -> Type[Config]:
         cls._logger.info(f"Load configuration: {fp_config_file}")
         # Default config if file does not exists
         if fp_config_file is None or not exists(fp_config_file):
@@ -210,7 +213,7 @@ class ProfileConfig:
 
 @dataclass
 class ProfileContext:
-    config: Type[ProfileConfig]
+    config: Type[Config]
     pid: int
 
     function_name: str = None
@@ -271,10 +274,33 @@ TRACE_CONTEXT_KEY = "_faas_profiler_context"
 
 
 @dataclass
-class TraceContext:
+class TracingContext:
     trace_id: str = None
     invocation_id: str = None
     parent_id: str = None
+
+    @classmethod
+    def create_from_payload_tracing_context(
+        cls,
+        payload_tracing_context: Type[TracingContext]
+    ) -> Type[TracingContext]:
+        """
+        Creates a new context based on the received tracing context.
+        """
+        if payload_tracing_context.trace_id:
+            trace_id = payload_tracing_context.trace_id
+        else:
+            trace_id = uuid4()
+
+        if payload_tracing_context.invocation_id:
+            parent_id = payload_tracing_context.invocation_id
+        else:
+            parent_id = None
+
+        return cls(
+            trace_id=trace_id,
+            invocation_id=uuid4(),
+            parent_id=parent_id)
 
     @property
     def is_complete(self) -> bool:
@@ -302,7 +328,7 @@ class TraceContext:
 
 
 @dataclass
-class TriggerContext:
+class InboundContext:
     provider: Provider
     service: Service
     operation: Operation
@@ -322,3 +348,60 @@ class TriggerContext:
         Merges tags into stored tags
         """
         self.tags.update(tags)
+
+
+# UnresolvedInboundContext = InboundContext(Provider.)
+
+
+@dataclass
+class OutboundContext:
+    """
+    Base data class for all patch invocations
+    """
+    module_name: str
+    function_name: str
+
+    instance: Any
+    original_function: Type[Callable]
+    original_args: tuple
+    original_kwargs: dict
+
+    response: Any = None
+
+    identifier: dict = field(default_factory=dict)
+    execution_time: float = None
+    invoked_at: Type[datetime] = None
+    has_error: bool = False
+    error: Type[Exception] = None
+
+    tags: dict = field(default_factory=dict)
+
+    def set_identifier(self, key: Any, value: Any) -> None:
+        """
+        Sets a new context identifier
+        """
+        self.identifier[key] = value
+
+    def set_tags(self, tags: dict) -> None:
+        """
+        Merges tags into stored tags
+        """
+        self.tags.update(tags)
+
+    def set_tag(self, key: Any, value: Any) -> None:
+        """
+        Sets a single tag.
+        """
+        self.tags[key] = value
+
+    def to_record(self) -> dict:
+        """
+        Return the context as dict such that it can be stored in a database
+        """
+        return {
+            "identifier": {str(k): str(v) for k, v in self.identifier.items()},
+            "invoked_at": self.invoked_at.isoformat(),
+            "execution_time": self.execution_time,
+            "has_error": str(self.has_error),
+            "error_message": str(self.error)
+        }
