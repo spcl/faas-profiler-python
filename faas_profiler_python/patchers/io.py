@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Type
 
-from faas_profiler_python.patchers import FunctionPatcher, InvocationContext
+from faas_profiler_python.patchers import FunctionPatcher, OutboundContext
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
 
 
@@ -16,9 +16,9 @@ class Open(FunctionPatcher):
     module_name: str = "builtins"
     function_name: str = "open"
 
-    def extract_context(
+    def extract_outbound_context(
             self,
-            invocation_context: Type[InvocationContext]) -> None:
+            invocation_context: Type[OutboundContext]) -> None:
 
         file = get_arg_by_key_or_pos(
             invocation_context.original_args,

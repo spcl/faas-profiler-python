@@ -6,8 +6,9 @@ Patcher for AWS botocore.
 
 from __future__ import annotations
 from typing import Type
+from faas_profiler_python.config import TracingContext
 
-from faas_profiler_python.patchers import FunctionPatcher, InvocationContext, PatchEvent
+from faas_profiler_python.patchers import FunctionPatcher, OutboundContext, PatchEvent
 from faas_profiler_python.utilis import (
     decode_base64_json_to_dict,
     encode_dict_to_base64_json,
@@ -24,9 +25,9 @@ class BotocoreAPI(FunctionPatcher):
 
     INJECTABLE_SERVICES = [AWSServices.LAMBDA]
 
-    def extract_context(
+    def extract_outbound_context(
             self,
-            invocation_context: Type[InvocationContext]) -> None:
+            invocation_context: Type[OutboundContext]) -> None:
 
         service = self._get_service(invocation_context.instance)
         meta = getattr(invocation_context.instance, "meta", None)
@@ -82,19 +83,16 @@ class BotocoreAPI(FunctionPatcher):
             **response_ctx
         })
 
-        return super().extract_context(invocation_context)
+        return super().extract_outbound_context(invocation_context)
 
-    def modify_function_args(
+    def inject_tracing_context(
         self,
-        patch_event: Type[PatchEvent]
+        patch_event: Type[PatchEvent],
+        tracing_context: Type[TracingContext]
     ) -> None:
         """
         Modifies the function arguments to inject a trace context (In place).
         """
-        if self._tracer is None:
-            self.logger.warn("Skipping injection. No tracer defined.")
-            return
-
         service = self._get_service(patch_event.instance)
 
         if service not in self.INJECTABLE_SERVICES:
@@ -114,11 +112,11 @@ class BotocoreAPI(FunctionPatcher):
         # Lambda Invocaction (sync and async)
         if service == AWSServices.LAMBDA and operation == "Invoke":
             self._inject_lambda_call(
-                api_params, self._tracer.context.to_injectable())
+                api_params, tracing_context.to_injectable())
 
     def _set_service_specific_identifiers(
         self,
-        invocation_context: Type[InvocationContext],
+        invocation_context: Type[OutboundContext],
         service: AWSServices,
         api_params: dict = {}
     ) -> None:

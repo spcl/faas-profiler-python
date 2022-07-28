@@ -9,22 +9,18 @@ from __future__ import annotations
 import logging
 import importlib
 
-from dataclasses import dataclass, field
 from datetime import datetime
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from threading import Lock
 from time import time
-from typing import TYPE_CHECKING, Any, Callable, List, Set, Type
+from typing import Any, Callable, List, Set, Type
 from collections import namedtuple
 from wrapt import wrap_function_wrapper
+from faas_profiler_python.config import OutboundContext, TracingContext
 
 from faas_profiler_python.utilis import Loggable
 from faas_profiler_python.core import BasePlugin
-
-if TYPE_CHECKING:
-    from faas_profiler_python.captures import Capture
-    from faas_profiler_python.tracer import DistributedTracer
 
 IGNORE_PATCH_FLAG = "__ignore_patch"
 ACTIVE_FUNCTION_PATCHERS = dict()
@@ -34,61 +30,6 @@ _logger.setLevel(logging.INFO)
 
 PatchEvent = namedtuple("PatchEvent", [
     "instance", "function", "args", "kwargs"])
-
-
-@dataclass
-class InvocationContext:
-    """
-    Base data class for all patch invocations
-    """
-    function_patcher: Type[FunctionPatcher]
-    module_name: str
-    function_name: str
-
-    instance: Any
-    original_function: Type[Callable]
-    original_args: tuple
-    original_kwargs: dict
-
-    response: Any = None
-
-    identifier: dict = field(default_factory=dict)
-    execution_time: float = None
-    invoked_at: Type[datetime] = None
-    has_error: bool = False
-    error: Type[Exception] = None
-
-    tags: dict = field(default_factory=dict)
-
-    def set_identifier(self, key: Any, value: Any) -> None:
-        """
-        Sets a new context identifier
-        """
-        self.identifier[key] = value
-
-    def set_tags(self, tags: dict) -> None:
-        """
-        Merges tags into stored tags
-        """
-        self.tags.update(tags)
-
-    def set_tag(self, key: Any, value: Any) -> None:
-        """
-        Sets a single tag.
-        """
-        self.tags[key] = value
-
-    def to_record(self) -> dict:
-        """
-        Return the context as dict such that it can be stored in a database
-        """
-        return {
-            "identifier": {str(k): str(v) for k, v in self.identifier.items()},
-            "invoked_at": self.invoked_at.isoformat(),
-            "execution_time": self.execution_time,
-            "has_error": str(self.has_error),
-            "error_message": str(self.error)
-        }
 
 
 class FunctionPatcher(ABC, BasePlugin, Loggable):
@@ -132,10 +73,58 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         self.active: str = False
         self._patched: bool = False
 
-        self._registered_captures: Set[Type[Capture]] = set()
-        self._tracer: Type[DistributedTracer] = None
+        self._tracing_context: Type[TracingContext] = None
+
+        self._registered_observers: Set[Callable] = set()
 
         super().__init__()
+
+    def register_observer(self, observe_function: Callable) -> None:
+        """
+        Registers a oberserver for the patcher
+        """
+        self._registered_observers.add(observe_function)
+
+    def activate(self) -> None:
+        """
+        Activates patcher.
+        """
+        if self._initialize_patch():
+            self._patched = True
+
+        self.active = True
+
+    def deactivate(self) -> None:
+        """
+        Deactivates patcher.
+        """
+        if self._deinitialize_patch():
+            self._patched = False
+
+        self.active = False
+
+    def set_trace_context_to_inject(
+        self,
+        tracing_context: Type[TracingContext]
+    ) -> None:
+        """
+        Sets the trace context to inject
+        """
+        self._tracing_context = tracing_context
+
+    @abstractmethod
+    def extract_outbound_context(
+        self,
+        invocation_context: Type[OutboundContext]
+    ) -> None:
+        pass
+
+    def inject_tracing_context(
+        self,
+        patch_event: Type[PatchEvent],
+        tracing_context: Type[TracingContext]
+    ) -> None:
+        raise NotImplementedError
 
     def _initialize_patch(self) -> bool:
         """
@@ -214,8 +203,7 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
                 f"Ignored call {original_function} on {instance}: {IGNORE_PATCH_FLAG} flag was True.")
             return original_function(*args, **kwargs)
 
-        invocation_context = InvocationContext(
-            function_patcher=self,
+        invocation_context = OutboundContext(
             module_name=self._complete_module_name,
             function_name=self.function_name,
             instance=instance,
@@ -235,11 +223,8 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
             invocation_context.has_error = True
             invocation_context.error = error
 
-            self._execute_extract_context(invocation_context)
-            self._notify_captures(invocation_context)
-
-            if self._tracer:
-                self._tracer.record_outbound_request(invocation_context)
+            self._execute_extract_outbound_context(invocation_context)
+            self._notify_observers(invocation_context)
 
             raise
         else:
@@ -247,33 +232,31 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
             invocation_context.has_error = False
             invocation_context.response = response
 
-            self._execute_extract_context(invocation_context)
-            self._notify_captures(invocation_context)
-
-            if self._tracer:
-                self._tracer.record_outbound_request(invocation_context)
+            self._execute_extract_outbound_context(invocation_context)
+            self._notify_observers(invocation_context)
 
             return response
 
-    def _notify_captures(self, invocation_context: Type[InvocationContext]):
+    def _notify_observers(self, invocation_context: Type[OutboundContext]):
         """
-        Notifies all registered captures.
+        Notifies all registered oberservers.
         """
-        for capture in self._registered_captures:
+        for oberserver_function in self._registered_observers:
             try:
-                capture.capture(invocation_context)
+                oberserver_function(invocation_context)
             except Exception as err:
-                self.logger.error(f"Notifying {capture} failed: {err}")
+                self.logger.error(
+                    f"Notifying {oberserver_function} failed: {err}")
 
-    def _execute_extract_context(
+    def _execute_extract_outbound_context(
         self,
-        invocation_context: Type[InvocationContext]
+        invocation_context: Type[OutboundContext]
     ) -> Any:
         """
         Safely executes the extract context hook
         """
         try:
-            self.extract_context(invocation_context)
+            self.extract_outbound_context(invocation_context)
         except Exception as err:
             self.logger.error(
                 f"Execution after invocation for patched function "
@@ -290,12 +273,12 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         """
         Calls the tracer to modify the payload if required.
         """
-        if self._tracer:
+        if self._tracing_context:
             patch_event = PatchEvent(instance, original_function, args, kwargs)
             org_args = tuple(args)
             org_kwargs = dict(kwargs)
             try:
-                self.modify_function_args(patch_event)
+                self.inject_tracing_context(patch_event, self._tracing_context)
             except Exception as err:
                 self._logger.error(
                     f"Injection failed: {err}. Take unmodified parameters.")
@@ -303,49 +286,6 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
                 kwargs = org_kwargs
 
         yield args, kwargs
-
-    def register_capture(self, capture) -> None:
-        """
-        Registers a new capture for the patcher.
-        """
-        self._registered_captures.add(capture)
-
-    def set_tracer(self, tracer) -> None:
-        """
-        Sets the current tracer.
-        """
-        self._tracer = tracer
-
-    def activate(self) -> None:
-        """
-        Activates patcher.
-        """
-        if self._initialize_patch():
-            self._patched = True
-
-        self.active = True
-
-    def deactivate(self) -> None:
-        """
-        Deactivates patcher.
-        """
-        if self._deinitialize_patch():
-            self._patched = False
-
-        self.active = False
-
-    @abstractmethod
-    def extract_context(
-        self,
-        invocation_context: Type[InvocationContext]
-    ) -> None:
-        pass
-
-    def modify_function_args(
-        self,
-        patch_event: Type[PatchEvent]
-    ) -> tuple:
-        raise NotImplementedError
 
 
 def request_patcher(
