@@ -13,8 +13,8 @@ from typing import Any, Tuple, Type
 from faas_profiler_python.utilis import lowercase_keys, get_idx_safely
 from faas_profiler_python.config import (
     Provider,
-    TraceContext,
-    TriggerContext,
+    TracingContext,
+    InboundContext,
     Service,
     Operation,
     TRACE_ID_HEADER,
@@ -196,11 +196,11 @@ class AWSEvent:
 
         return service, operation
 
-    def extract_trigger_context(self) -> Type[TriggerContext]:
+    def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Returns context about the trigger
         """
-        trigger_ctx = TriggerContext(
+        trigger_ctx = InboundContext(
             Provider.AWS, self.service, self.operation)
 
         if self.service == AWSServices.S3:
@@ -208,46 +208,46 @@ class AWSEvent:
 
         return trigger_ctx
 
-    def extract_trace_context(self) -> Type[TraceContext]:
+    def extract_trace_context(self) -> Type[TracingContext]:
         # if "headers" in self.data:
         #     return self._http_tracing_context()
         # if self.service == EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
         #     return self._scheduled_event_context()
 
         # Default case: Return empty trace context
-        return TraceContext()
+        return TracingContext()
 
-    def _http_tracing_context(self) -> Type[TraceContext]:
+    def _http_tracing_context(self) -> Type[TracingContext]:
         """
         Extracts the tracing context from http headers.
         """
         headers = lowercase_keys(self.data.get("headers", {}))
-        return TraceContext(
+        return TracingContext(
             trace_id=headers.get(TRACE_ID_HEADER),
             invocation_id=headers.get(INVOCATION_ID_HEADER),
             parent_id=headers.get(PARENT_ID_HEADER))
 
-    def _sns_tracing_context(self) -> Type[TraceContext]:
+    def _sns_tracing_context(self) -> Type[TracingContext]:
         # TODO
         pass
 
-    def _sqs_tracing_context(self) -> Type[TraceContext]:
+    def _sqs_tracing_context(self) -> Type[TracingContext]:
         # TODO
         pass
 
-    def _scheduled_event_context(self) -> Type[TraceContext]:
+    def _scheduled_event_context(self) -> Type[TracingContext]:
         """
         Extracts the tracing context from detail values.
         """
         detail = lowercase_keys(self.data.get("detail", {}))
         context = detail.get(TRACE_CONTEXT_KEY, {})
-        return TraceContext(
+        return TracingContext(
             trace_id=context.get(TRACE_CONTEXT_KEY),
             invocation_id=context.get(INVOCATION_ID_HEADER),
             parent_id=context.get(PARENT_ID_HEADER))
 
     def _add_s3_trigger_context(
-            self, trigger_context: Type[TriggerContext]) -> None:
+            self, trigger_context: Type[InboundContext]) -> None:
         """
         Adds S3 specific trigger information.
         """
@@ -400,11 +400,11 @@ class AWSContext:
 
         return client_ctx
 
-    def extract_trace_context(self) -> Type[TraceContext]:
+    def extract_trace_context(self) -> Type[TracingContext]:
         """
         Extracts Trace context from AWS Lambda Context object.
         """
-        return TraceContext(
+        return TracingContext(
             trace_id=self.custom_context.get(TRACE_ID_HEADER),
             invocation_id=self.custom_context.get(INVOCATION_ID_HEADER),
             parent_id=self.custom_context.get(PARENT_ID_HEADER))
