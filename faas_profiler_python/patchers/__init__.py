@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from faas_profiler_python.captures import Capture
     from faas_profiler_python.tracer import DistributedTracer
 
+IGNORE_PATCH_FLAG = "__ignore_patch"
 ACTIVE_FUNCTION_PATCHERS = dict()
 
 _logger = logging.getLogger("Patchers")
@@ -76,6 +77,18 @@ class InvocationContext:
         Sets a single tag.
         """
         self.tags[key] = value
+
+    def to_record(self) -> dict:
+        """
+        Return the context as dict such that it can be stored in a database
+        """
+        return {
+            "identifier": {str(k): str(v) for k, v in self.identifier.items()},
+            "invoked_at": self.invoked_at.isoformat(),
+            "execution_time": self.execution_time,
+            "has_error": str(self.has_error),
+            "error_message": str(self.error)
+        }
 
 
 class FunctionPatcher(ABC, BasePlugin, Loggable):
@@ -195,6 +208,12 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
         if not self.active:
             return original_function(*args, **kwargs)
 
+        ignore_patch = bool(getattr(instance, IGNORE_PATCH_FLAG, False))
+        if ignore_patch:
+            self.logger.info(
+                f"Ignored call {original_function} on {instance}: {IGNORE_PATCH_FLAG} flag was True.")
+            return original_function(*args, **kwargs)
+
         invocation_context = InvocationContext(
             function_patcher=self,
             module_name=self._complete_module_name,
@@ -220,7 +239,7 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
             self._notify_captures(invocation_context)
 
             if self._tracer:
-                self._tracer.record_outbound_request()
+                self._tracer.record_outbound_request(invocation_context)
 
             raise
         else:
@@ -232,7 +251,7 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
             self._notify_captures(invocation_context)
 
             if self._tracer:
-                self._tracer.record_outbound_request()
+                self._tracer.record_outbound_request(invocation_context)
 
             return response
 
@@ -349,3 +368,10 @@ def request_patcher(
     ACTIVE_FUNCTION_PATCHERS[patch_cls] = patcher
 
     return patcher
+
+
+def ignore_instance_from_patching(instance: Any) -> None:
+    """
+    Sets a flag to ignore this instance during patching.
+    """
+    setattr(instance, IGNORE_PATCH_FLAG, True)
