@@ -9,12 +9,11 @@ from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
 
-from faas_profiler_python.config import ProfileConfig, ProfileContext, MeasuringState, Provider
+from faas_profiler_python.config import Config, ProfileContext, MeasuringState, Provider
 from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
-# from faas_profiler_python.exporter import ResultsCollector, Exporter
-from faas_profiler_python.payload import Payload
 from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
+from faas_profiler_python.exporters import Exporter
 from faas_profiler_python.core import BatchExecution, PeriodicProcess, split_plugin_list_by_subclass
 from faas_profiler_python.utilis import Loggable
 
@@ -47,11 +46,12 @@ class Profiler(Loggable):
     def __init__(self, config_file: str = None) -> None:
         super().__init__()
         # Load user configuration
-        self.config = ProfileConfig.load_file(config_file)
+        self.config = Config.load_file(config_file)
 
         # Load all requested plugins
         captures = Capture.load(self.config.captures)
         measurements = Measurement.load(self.config.measurements)
+        exporters = Exporter.load(self.config.exporters)
 
         periodic_measurements, default_measurements = split_plugin_list_by_subclass(
             measurements, PeriodicMeasurement)
@@ -61,17 +61,14 @@ class Profiler(Loggable):
         self.capture_batch = BatchExecution(captures)
 
         # Determine Cloud Provider: TODO: Make this dynamic
-        self.cloud_provider = Provider.AWS
-
-        # Payload
-        self.payload: Type[Payload] = None
+        self.provider = Provider.AWS
 
         # Profiler Context
         self.profile_context = ProfileContext(
             self.config, os.getpid())
 
         # Distributed Tracer
-        self.tracer: Type[DistributedTracer] = None
+        self.tracer = DistributedTracer(self.config, self.provider)
 
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
@@ -86,24 +83,15 @@ class Profiler(Loggable):
             "[PROFILER PLAN]: \n"
             f"- Measurements: {measurements} \n"
             f"- Captures: {captures} \n"
-            f"- Exporters: {self.config.exporters}"
+            f"- Exporters: {exporters}"
         ))
 
-    def __call__(self, func: Type[Callable], *args, **kwargs) -> Any:
+    def __call__(self, func: Callable, *args, **kwargs) -> Any:
         """
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        self.profile_context.set_function(func)
-
-        self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
-
-        self.tracer = DistributedTracer(
-            payload=self.payload,
-            provider=self.cloud_provider,
-            outbound_requests_tables=self.config.outbound_requests_tables)
-
-        self._start()
+        self.start(args, kwargs)
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
 
         try:
@@ -113,34 +101,39 @@ class Profiler(Loggable):
             func_ret = None
         finally:
             self.logger.info("-- FUNCTION EXCUTED --")
-            self._stop()
+            self.stop()
 
         self.export()
 
         return func_ret
 
-    def _start(self) -> None:
+    def start(
+        self,
+        function_args: tuple = tuple(),
+        functon_kwargs: dict = {}
+    ) -> None:
         """
         Starts the profiling.
-
-        Internal use only. Use __call__ to start a new profile run.
         """
         self.logger.info("[PROFILER] Profiler run started.")
+
+        self.tracer.handle_inbound_request(function_args, functon_kwargs)
+        self.tracer.start_tracing_outbound_requests()
 
         self._start_capturing()
         self._start_default_measurements()
         self._start_periodic_measurements()
 
-    def _stop(self) -> None:
+    def stop(self) -> None:
         """
         Stops the profiling.
-
-        Internal use only. Use __call__ to stop a new profile run.
         """
         self.logger.info("Profile run stopped.")
         self._stop_periodic_measurements()
         self._stop_default_measurements()
         self._stop_capturing()
+
+        self.tracer.stop_tracing_outbound_requests()
 
         if self.periodic_process:
             self.periodic_process.join()
@@ -150,9 +143,16 @@ class Profiler(Loggable):
         """
         Exports the profiling data.
         """
-        # if not self.config.exporters:
-        #     self.logger.warn("No exporters defined. Will discard results.")
-        #     return
+        if not self.config.exporters:
+            self.logger.warn("No exporters defined. Will discard results.")
+            return
+
+        self.logger.info(
+            "[EXPORT]: Collecting results.")
+
+        # results_collector = ResultCollector(
+
+        # )
 
         # results_collector = ResultsCollector(
         #     config=self.config,
@@ -174,8 +174,6 @@ class Profiler(Loggable):
         #     except Exception as err:
         #         self.logger.error(
         # f"Exporting results with {config_item.name} failed: {err}")
-
-    # Private methods
 
     def _start_default_measurements(self):
         """
