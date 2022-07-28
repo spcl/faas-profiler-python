@@ -99,7 +99,9 @@ class Profiler(Loggable):
         self.payload = Payload.resolve(self.cloud_provider, (args, kwargs))
 
         self.tracer = DistributedTracer(
-            payload=self.payload)
+            payload=self.payload,
+            provider=self.cloud_provider,
+            outbound_requests_tables=self.config.outbound_requests_tables)
 
         self._start()
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
