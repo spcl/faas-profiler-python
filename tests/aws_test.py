@@ -176,6 +176,6 @@ def test_kinesis_stream_resolve():
 ])
 def test_s3_trigger_context_extraction(event_payload):
     event = AWSEvent(event_payload)
-    trigger_ctx = event.extract_trigger_context()
+    trigger_ctx = event.extract_inbound_context()
 
     
