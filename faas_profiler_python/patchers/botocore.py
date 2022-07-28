@@ -65,8 +65,11 @@ class BotocoreAPI(FunctionPatcher):
         if response_ctx.get("request_id"):
             invocation_context.set_identifier(
                 "request_id", response_ctx.get("request_id"))
-            self._set_service_specific_identifiers(
-                invocation_context, service, api_params)
+
+        invocation_context.set_identifier("operation", operation)
+        invocation_context.set_identifier("service", service.value)
+        self._set_service_specific_identifiers(
+            invocation_context, service, api_params)
 
         invocation_context.set_tags({
             "service": service,
@@ -125,7 +128,8 @@ class BotocoreAPI(FunctionPatcher):
         if service == AWSServices.S3:
             invocation_context.set_identifier(
                 "bucket_name", api_params.get("Bucket"))
-            invocation_context.set_identifier("object_key", api_params.get("Key"))
+            invocation_context.set_identifier(
+                "object_key", api_params.get("Key"))
 
     def _get_http_info(
         self,
