@@ -62,7 +62,7 @@ class EventTypes(Enum):
     API_GATEWAY_HTTP = 'api_gateway_http'
     S3 = 'S3'
     SNS = 'sns'
-    DYNAMO_DB = 'dynamo_db'
+    DYNAMO_DB = 'dynamodb'
     CLOUDFRONT = 'cloudfront'
     CLOUDWATCH_SCHEDULED_EVENT = 'cloudwatch_scheduled_event'
     CLOUDWATCH_LOGS = 'cloudwatch_logs'
@@ -86,7 +86,7 @@ class AWSServices(Service):
     UNIDENTIFIED = 'unidentified'
     LAMBDA = "lambda"
     CLOUDFRONT = 'cloudfront'
-    DYNAMO_DB = 'dynamo_db'
+    DYNAMO_DB = 'dynamodb'
     CLOUD_FORMATION = 'cloud_formation'
     SNS = 'sns'
     SES = 'ses'
