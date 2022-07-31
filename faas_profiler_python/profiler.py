@@ -53,7 +53,7 @@ class Profiler(Loggable):
         # Load all requested plugins
         captures = Capture.load(self.config.captures)
         measurements = Measurement.load(self.config.measurements)
-        exporters = Exporter.load(self.config.exporters)
+        self.exporters = Exporter.load(self.config.exporters)
 
         periodic_measurements, default_measurements = split_plugin_list_by_subclass(
             measurements, PeriodicMeasurement)
@@ -86,7 +86,7 @@ class Profiler(Loggable):
             "[PROFILER PLAN]: \n"
             f"- Measurements: {measurements} \n"
             f"- Captures: {captures} \n"
-            f"- Exporters: {exporters}"
+            f"- Exporters: {self.exporters}"
         ))
 
     def __call__(self, func: Callable, *args, **kwargs) -> Any:
@@ -158,7 +158,16 @@ class Profiler(Loggable):
             tracing_context=self.tracer.tracing_context,
             inbound_context=self.tracer.inbound_context,
             outbound_contexts=self.tracer.outbound_contexts)
-        print(results_collector.raw_data)
+
+        for exporter_plugin in self.exporters:
+            try:
+                exporter = exporter_plugin.cls(
+                    parameters=exporter_plugin.parameters)
+
+                exporter.export(results_collector)
+            except Exception as err:
+                self.logger.error(
+                    f"Exporting with {exporter_plugin.cls} failed: {err}")
 
     def _start_default_measurements(self):
         """

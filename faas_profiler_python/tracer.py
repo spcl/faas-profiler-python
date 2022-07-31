@@ -100,7 +100,8 @@ class DistributedTracer(Loggable):
         """
         Stops tracing outgoing requests by unpatching libraries.
         """
-        pass
+        for active_patcher in self._active_outbound_patchers:
+            active_patcher.deactivate()
 
     """
     Request handling methods
