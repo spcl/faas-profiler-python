@@ -4,21 +4,17 @@
 Distributed tracer module.
 """
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from datetime import datetime
-import decimal
-import json
-import boto3
 
 from typing import List, Type
 from uuid import uuid4
-from boto3.dynamodb.types import TypeSerializer
-from botocore.exceptions import ClientError
 
-from faas_profiler_python.config import Config, Provider, TracingContext, InboundContext
+from faas_profiler_core.outbound import OutboundRequestTable, NoopOutboundRequestTable
+from faas_profiler_core.constants import Provider
+from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
+
+from faas_profiler_python.config import Config
 from faas_profiler_python.patchers import (
     FunctionPatcher,
-    OutboundContext,
     request_patcher,
     ignore_instance_from_patching
 )
@@ -128,8 +124,8 @@ class DistributedTracer(Loggable):
         self.payload = Payload.resolve(
             self.provider, (function_args, function_kwargs))
         self._inbound_context = self.payload.extract_inbound_context()
-        self._tracing_context = TracingContext.create_from_payload_tracing_context(
-            payload_tracing_context=self.payload.extract_tracing_context())
+        self._tracing_context = self._inferre_tracing_context(
+            parent_context=self.payload.extract_tracing_context())
 
         self.logger.info(f"NEW SPAN: {self._tracing_context}")
 
@@ -148,9 +144,38 @@ class DistributedTracer(Loggable):
         self._outbound_request_table.store_request(
             outbound_context, self.tracing_context)
 
+        self._outbound_contexts.append(outbound_context)
+
     """
     Private methods
     """
+
+    def _inferre_tracing_context(
+        self,
+        parent_context: Type[TracingContext]
+    ) -> Type[TracingContext]:
+        """
+        Creates tracing context based on parent context.
+        """
+        if not parent_context:
+            self.logger.info(
+                "Parent tracing context is empty. Create new one.")
+            return TracingContext(trace_id=uuid4(), record_id=uuid4)
+
+        if parent_context.trace_id:
+            trace_id = parent_context.trace_id
+        else:
+            trace_id = uuid4()
+
+        if parent_context.record_id:
+            parent_id = parent_context.record_id
+        else:
+            parent_id = None
+
+        return TracingContext(
+            trace_id=trace_id,
+            record_id=uuid4(),
+            parent_id=parent_id)
 
     def _initialize_outbound_request_table(self):
         """
@@ -162,101 +187,11 @@ class DistributedTracer(Loggable):
                 **self.config.outbound_requests_tables.get(self.provider, {}))
             self.logger.info(
                 f"Initialized new Outbound Request Table {outbound_table_cls.__name__} for {self.provider}")
+
+            # TODO: AWS specific
+            ignore_instance_from_patching(outbound_request_table.dynamodb)
             return outbound_request_table
         except Exception as err:
             self.logger.error(
                 f"Could not initialize Outbound Request Table for {self.provider}: {err}")
             return NoopOutboundRequestTable()
-
-
-"""
-Outbound Request Table
-"""
-
-
-class OutboundRequestTable(ABC, Loggable):
-    """
-    Base class for a outbound request table.
-    """
-
-    @classmethod
-    def factory(cls, provider: Provider):
-        if provider == Provider.AWS:
-            return AWSOutboundRequestTable
-        else:
-            return NoopOutboundRequestTable
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__()
-
-    @abstractmethod
-    def store_request(
-        self,
-        invocation_context: Type[OutboundContext],
-        trace_context: Type[TracingContext]
-    ) -> None:
-        pass
-
-
-class NoopOutboundRequestTable(OutboundRequestTable):
-    """
-    Dummy Outbound Request Table for unresolved providers.
-    """
-
-    def store_request(
-        self,
-        invocation_context: Type[OutboundContext],
-        trace_context: Type[TracingContext]
-    ) -> None:
-        self.logger.warn(
-            "Skipping recording outbound request. No outbound request table defined.")
-
-
-class AWSOutboundRequestTable(OutboundRequestTable):
-    """
-    Represents a dynamoDB backed table for recording outbounding requests in AWS
-    """
-
-    def __init__(self, table_name: str, region_name: str) -> None:
-        super().__init__()
-
-        self.table_name = table_name
-        self.region_name = region_name
-
-        if self.table_name is None or self.region_name is None:
-            raise RuntimeError(
-                "Cannot initialize Outbound Request Table for AWS. Table name or region name is missing.")
-
-        self.dynamodb = boto3.client('dynamodb', region_name=self.region_name)
-        self.serializer = TypeSerializer()
-
-        ignore_instance_from_patching(self.dynamodb)
-
-    def store_request(
-        self,
-        invocation_context: Type[OutboundContext],
-        trace_context: Type[TracingContext]
-    ) -> None:
-        """
-        Stores the invocation the dynamodb table
-        """
-        request_id = uuid4()
-        record = {
-            **invocation_context.to_record(),
-            "outbound_request_id": str(request_id),
-            "timestamp": datetime.timestamp(invocation_context.invoked_at),
-            "trace_id": str(trace_context.trace_id),
-            "invocation_id": str(trace_context.invocation_id)
-        }
-        item = json.loads(json.dumps(record), parse_float=decimal.Decimal)
-        item = {
-            k: self.serializer.serialize(v) for k,
-            v in item.items() if v != ""}
-        try:
-            self.dynamodb.put_item(TableName=self.table_name, Item=item)
-        except ClientError as err:
-            self.logger.info(
-                f"Failed to record outbound request {request_id} in {self.table_name}: {err}")
-        else:
-            self.logger.info(
-                f"Successfully recorded outbound request {request_id} in {self.table_name}")
