@@ -1,5 +1,8 @@
 # --- General packages ---
 
+## FaaS-Profiler-Core
+git+https://${GITHUB_ACCESS_TOKEN}@github.com/maltewae/faas-profiler-core
+
 ## Package to parse ymal
 pyyaml
 
