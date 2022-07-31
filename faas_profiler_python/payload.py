@@ -99,7 +99,7 @@ class AWSPayload(Payload):
         Tracing context from event is preferred.
         """
         event_ctx = self.event.extract_trace_context()
-        if event_ctx.is_complete:
+        if event_ctx is not None:
             return event_ctx
 
         return self.context.extract_trace_context()
