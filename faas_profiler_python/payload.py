@@ -11,8 +11,10 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Type
 
+from faas_profiler_core.constants import Provider
+from faas_profiler_core.models import TracingContext, InboundContext
+
 from faas_profiler_python.aws import AWSContext, AWSEvent
-from faas_profiler_python.config import Provider, TracingContext, InboundContext
 
 
 class Payload(ABC):
@@ -65,13 +67,13 @@ class UnresolvedPayload(Payload):
         """
         Return a empty trace context.
         """
-        return TracingContext()
+        return None
 
     def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Returns a empty trigger context.
         """
-        return InboundContext()
+        return None
 
 
 class AWSPayload(Payload):
