@@ -4,22 +4,23 @@
 FaaS-Profiler configuration
 """
 from __future__ import annotations
+from abc import ABC, abstractmethod
 
 import logging
 from uuid import uuid4
 import pkg_resources
 import yaml
-import inspect
 
-from datetime import datetime
 from os.path import abspath, exists
 from enum import Enum
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Type
+from dataclasses import dataclass
+from typing import Any, Dict, List, Type
 from collections import namedtuple
 
 from faas_profiler_python.utilis import lowercase_keys
 from functools import reduce
+
+from faas_profiler_core.constants import Provider
 
 # TODO: make case dest for AWS, local usw
 TMP_RESULT_DIR = abspath("/tmp")
@@ -48,16 +49,6 @@ class TriggerSynchronicity(Enum):
     UNIDENTIFIED = 'unidentified'
     ASYNC = "async"
     SYNC = "sync"
-
-
-class Provider(Enum):
-    """
-    Enumeration of different cloud providers.
-    """
-    UNIDENTIFIED = "unidentified"
-    AWS = "aws"
-    GCP = "gcp"
-    AZURE = "azure"
 
 
 class Service(Enum):
@@ -212,24 +203,6 @@ class Config:
 
 
 @dataclass
-class ProfileContext:
-    config: Type[Config]
-    pid: int
-
-    function_name: str = None
-    module_name: str = None
-    periodic_process_pid: int = None
-
-    def set_function(self, func):
-        self.function_name = func.__name__
-        try:
-            module = inspect.getmodule(func)
-            self.module_name = module.__name__
-        except Exception:
-            self.module_name = None
-
-
-@dataclass
 class MeasuringPoint:
     """
     Data class for measuring points during parallel measurements
@@ -262,6 +235,25 @@ class ProcessFeedback:
 
 
 """
+Contexts
+"""
+
+
+@dataclass
+class Context(ABC):
+    """
+    Abstract base class for contexts in FaaS-Profiler
+    """
+
+    @abstractmethod
+    def to_record(self) -> dict:
+        """
+        Return the context as dict, so that it can be added as in the record.
+        """
+        pass
+
+
+"""
 Distrubted Tracing Config
 """
 
@@ -274,7 +266,7 @@ TRACE_CONTEXT_KEY = "_faas_profiler_context"
 
 
 @dataclass
-class TracingContext:
+class TracingContext(Context):
     trace_id: str = None
     invocation_id: str = None
     parent_id: str = None
@@ -326,82 +318,12 @@ class TracingContext:
 
         return ctx
 
-
-@dataclass
-class InboundContext:
-    provider: Provider
-    service: Service
-    operation: Operation
-    trigger_synchronicity: TriggerSynchronicity = TriggerSynchronicity.UNIDENTIFIED
-
-    identifier: dict = field(default_factory=dict)
-    tags: dict = field(default_factory=dict)
-
-    def set_identifier(self, key: Any, value: Any) -> None:
-        """
-        Sets a new context identifier
-        """
-        self.identifier[key] = value
-
-    def set_tags(self, tags: dict) -> None:
-        """
-        Merges tags into stored tags
-        """
-        self.tags.update(tags)
-
-
-# UnresolvedInboundContext = InboundContext(Provider.)
-
-
-@dataclass
-class OutboundContext:
-    """
-    Base data class for all patch invocations
-    """
-    module_name: str
-    function_name: str
-
-    instance: Any
-    original_function: Type[Callable]
-    original_args: tuple
-    original_kwargs: dict
-
-    response: Any = None
-
-    identifier: dict = field(default_factory=dict)
-    execution_time: float = None
-    invoked_at: Type[datetime] = None
-    has_error: bool = False
-    error: Type[Exception] = None
-
-    tags: dict = field(default_factory=dict)
-
-    def set_identifier(self, key: Any, value: Any) -> None:
-        """
-        Sets a new context identifier
-        """
-        self.identifier[key] = value
-
-    def set_tags(self, tags: dict) -> None:
-        """
-        Merges tags into stored tags
-        """
-        self.tags.update(tags)
-
-    def set_tag(self, key: Any, value: Any) -> None:
-        """
-        Sets a single tag.
-        """
-        self.tags[key] = value
-
     def to_record(self) -> dict:
         """
-        Return the context as dict such that it can be stored in a database
+        Returns the tracing context as dict
         """
         return {
-            "identifier": {str(k): str(v) for k, v in self.identifier.items()},
-            "invoked_at": self.invoked_at.isoformat(),
-            "execution_time": self.execution_time,
-            "has_error": str(self.has_error),
-            "error_message": str(self.error)
+            "trace_id": str(self.trace_id),
+            "invocation_id": str(self.invocation_id),
+            "parent_id": str(self.parent_id)
         }

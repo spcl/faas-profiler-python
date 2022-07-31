@@ -11,10 +11,11 @@ import inspect
 import logging
 import traceback
 
+from faas_profiler_core.models import FunctionContext
+
 from faas_profiler_python.config import (
     MeasuringState,
     ProcessFeedback,
-    ProfileContext,
     LoadedPlugin,
     UnresolvedPlugin
 )
@@ -166,7 +167,7 @@ class PeriodicProcess(Process):
     def __init__(
         self,
         batch: Type[BatchExecution],
-        profile_context: Type[ProfileContext],
+        profile_context: Type[FunctionContext],
         parent_connection: Type[connection.Connection],
         child_connection: Type[connection.Connection],
         refresh_interval: float = 0.1
