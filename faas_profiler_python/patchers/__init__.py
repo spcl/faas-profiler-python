@@ -13,11 +13,12 @@ from datetime import datetime
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from threading import Lock
-from time import time
 from typing import Any, Callable, List, Set, Type
 from collections import namedtuple
 from wrapt import wrap_function_wrapper
-from faas_profiler_python.config import OutboundContext, TracingContext
+
+from faas_profiler_core.constants import Provider
+from faas_profiler_core.models import OutboundContext, TracingContext
 
 from faas_profiler_python.utilis import Loggable
 from faas_profiler_python.core import BasePlugin
@@ -115,7 +116,7 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
     @abstractmethod
     def extract_outbound_context(
         self,
-        invocation_context: Type[OutboundContext]
+        outbound_context: Type[OutboundContext]
     ) -> None:
         pass
 
@@ -203,63 +204,66 @@ class FunctionPatcher(ABC, BasePlugin, Loggable):
                 f"Ignored call {original_function} on {instance}: {IGNORE_PATCH_FLAG} flag was True.")
             return original_function(*args, **kwargs)
 
-        invocation_context = OutboundContext(
-            module_name=self._complete_module_name,
-            function_name=self.function_name,
-            instance=instance,
-            original_function=original_function,
-            original_args=args,
-            original_kwargs=kwargs)
+        outbound_context = OutboundContext(
+            provider=Provider.UNIDENTIFIED,
+            service=None,
+            operation=None,
+            identifier={})
+        outbound_context.set_tags({
+            "_instance": instance,
+            "_function": original_function,
+            "_args": args,
+            "_kwargs": kwargs
+        })
 
         try:
-            execution_start = time()
-            invocation_context.invoked_at = datetime.now()
+            outbound_context.invoked_at = datetime.now()
             with self._modified_payload(
                 original_function, instance, args, kwargs
             ) as (mod_args, mod_kwargs):
                 response = original_function(*mod_args, **mod_kwargs)
         except Exception as error:
-            invocation_context.execution_time = time() - execution_start
-            invocation_context.has_error = True
-            invocation_context.error = error
+            outbound_context.finished_at = datetime.now()
+            outbound_context.has_error = True
+            outbound_context.error_message = str(error)
 
-            self._execute_extract_outbound_context(invocation_context)
-            self._notify_observers(invocation_context)
+            self._execute_extract_outbound_context(outbound_context)
+            self._notify_observers(outbound_context)
 
             raise
         else:
-            invocation_context.execution_time = time() - execution_start
-            invocation_context.has_error = False
-            invocation_context.response = response
+            outbound_context.finished_at = datetime.now()
+            outbound_context.has_error = False
+            outbound_context.set_tags({"_response": response})
 
-            self._execute_extract_outbound_context(invocation_context)
-            self._notify_observers(invocation_context)
+            self._execute_extract_outbound_context(outbound_context)
+            self._notify_observers(outbound_context)
 
             return response
 
-    def _notify_observers(self, invocation_context: Type[OutboundContext]):
+    def _notify_observers(self, outbound_context: Type[OutboundContext]):
         """
         Notifies all registered oberservers.
         """
         for oberserver_function in self._registered_observers:
             try:
-                oberserver_function(invocation_context)
+                oberserver_function(outbound_context)
             except Exception as err:
                 self.logger.error(
                     f"Notifying {oberserver_function} failed: {err}")
 
     def _execute_extract_outbound_context(
         self,
-        invocation_context: Type[OutboundContext]
+        outbound_context: Type[OutboundContext]
     ) -> Any:
         """
         Safely executes the extract context hook
         """
         try:
-            self.extract_outbound_context(invocation_context)
+            self.extract_outbound_context(outbound_context)
         except Exception as err:
             self.logger.error(
-                f"Execution after invocation for patched function "
+                f"Execution outbound context extraction for patched function "
                 f"{self.function_name} in module {self._complete_module_name} failed: {err}")
 
     @contextmanager

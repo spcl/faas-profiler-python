@@ -6,16 +6,16 @@ Patcher for AWS botocore.
 
 from __future__ import annotations
 from typing import Type
-from faas_profiler_python.config import TracingContext
 
-from faas_profiler_python.patchers import FunctionPatcher, OutboundContext, PatchEvent
+from faas_profiler_core.constants import AWSService, AWSOperation, Provider
+from faas_profiler_core.models import OutboundContext, TracingContext
+
+from faas_profiler_python.patchers import FunctionPatcher, PatchEvent
 from faas_profiler_python.utilis import (
     decode_base64_json_to_dict,
     encode_dict_to_base64_json,
     get_arg_by_key_or_pos
 )
-
-from faas_profiler_python.aws import AWSServices
 
 
 class BotocoreAPI(FunctionPatcher):
@@ -23,24 +23,30 @@ class BotocoreAPI(FunctionPatcher):
     submodules: str = ["client"]
     function_name: str = "BaseClient._make_api_call"
 
-    INJECTABLE_SERVICES = [AWSServices.LAMBDA]
+    INJECTABLE_SERVICES = [AWSService.LAMBDA]
 
     def extract_outbound_context(
-            self,
-            invocation_context: Type[OutboundContext]) -> None:
-
-        service = self._get_service(invocation_context.instance)
-        meta = getattr(invocation_context.instance, "meta", None)
+        self,
+        outbound_context: Type[OutboundContext]
+    ) -> None:
+        outbound_context.provider = Provider.AWS
+        outbound_context.service = self._get_service(outbound_context.instance)
+        outbound_context.operation = AWSOperation.UNIDENTIFIED
 
         operation = get_arg_by_key_or_pos(
-            invocation_context.original_args,
-            invocation_context.original_kwargs,
+            outbound_context.args,
+            outbound_context.kwargs,
             pos=0,
-            kw="operation_name",
-            default='unidentified')
+            kw="operation_name")
+
+        if outbound_context.service == AWSService.S3:
+            if operation == "PutObject":
+                outbound_context.operation = AWSOperation.S3_OBJECT_CREATE
+
+        meta = getattr(outbound_context.instance, "meta", None)
         api_params = get_arg_by_key_or_pos(
-            invocation_context.original_args,
-            invocation_context.original_kwargs,
+            outbound_context.args,
+            outbound_context.kwargs,
             pos=1,
             kw="api_params",
             default='{}')
@@ -48,33 +54,29 @@ class BotocoreAPI(FunctionPatcher):
         http_method, http_uri = self._get_http_info(meta, operation)
 
         response_ctx = {}
-        if invocation_context.response:
+        if outbound_context.response:
             response_ctx = {
-                "request_id": invocation_context.response.get(
+                "request_id": outbound_context.response.get(
                     "ResponseMetadata",
                     {}).get("RequestId"),
-                "http_code": invocation_context.response.get(
+                "http_code": outbound_context.response.get(
                     "ResponseMetadata",
                     {}).get("HTTPStatusCode"),
-                "retry_attempts": invocation_context.response.get(
+                "retry_attempts": outbound_context.response.get(
                     "ResponseMetadata",
                     {}).get("RetryAttempts"),
-                "content_type": invocation_context.response.get("ContentType"),
-                "content_length": invocation_context.response.get("ContentLength"),
+                "content_type": outbound_context.response.get("ContentType"),
+                "content_length": outbound_context.response.get("ContentLength"),
             }
 
         if response_ctx.get("request_id"):
-            invocation_context.set_identifier(
+            outbound_context.set_identifier(
                 "request_id", response_ctx.get("request_id"))
 
-        invocation_context.set_identifier("operation", operation)
-        invocation_context.set_identifier("service", service.value)
         self._set_service_specific_identifiers(
-            invocation_context, service, api_params)
+            outbound_context, api_params)
 
-        invocation_context.set_tags({
-            "service": service,
-            "operation": operation,
+        outbound_context.set_tags({
             "endpoint_url": getattr(meta, "endpoint_url"),
             "region_name": getattr(meta, "region_name"),
             "api_params": api_params,
@@ -82,8 +84,6 @@ class BotocoreAPI(FunctionPatcher):
             "http_uri": http_uri,
             **response_ctx
         })
-
-        return super().extract_outbound_context(invocation_context)
 
     def inject_tracing_context(
         self,
@@ -110,23 +110,22 @@ class BotocoreAPI(FunctionPatcher):
             patch_event.args, patch_event.kwargs, 0, "operation_name")
 
         # Lambda Invocaction (sync and async)
-        if service == AWSServices.LAMBDA and operation == "Invoke":
+        if service == AWSService.LAMBDA and operation == "Invoke":
             self._inject_lambda_call(
                 api_params, tracing_context.to_injectable())
 
     def _set_service_specific_identifiers(
         self,
-        invocation_context: Type[OutboundContext],
-        service: AWSServices,
+        outbound_context: Type[OutboundContext],
         api_params: dict = {}
     ) -> None:
         """
         Set resource specific identifiers
         """
-        if service == AWSServices.S3:
-            invocation_context.set_identifier(
+        if outbound_context.service == AWSService.S3:
+            outbound_context.set_identifier(
                 "bucket_name", api_params.get("Bucket"))
-            invocation_context.set_identifier(
+            outbound_context.set_identifier(
                 "object_key", api_params.get("Key"))
 
     def _get_http_info(
@@ -147,22 +146,22 @@ class BotocoreAPI(FunctionPatcher):
 
         return None, None
 
-    def _get_service(self, instance) -> str:
+    def _get_service(self, instance) -> AWSService:
         """
         Detects the AWS service based on the endpoint prefix
         """
         if not hasattr(instance, "_endpoint"):
             self.logger.error(
                 f"Could not detect service of {instance}. No _endpoint defined.")
-            return AWSServices.UNIDENTIFIED
+            return AWSService.UNIDENTIFIED
 
         _prefix = getattr(instance._endpoint, "_endpoint_prefix", None)
         try:
-            return AWSServices(_prefix)
+            return AWSService(_prefix)
         except ValueError as err:
             self.logger.error(
                 f"Could not detect service of {instance}: {err}")
-            return AWSServices.UNIDENTIFIED
+            return AWSService.UNIDENTIFIED
 
     def _inject_lambda_call(
         self,
