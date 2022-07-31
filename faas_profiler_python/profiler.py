@@ -4,16 +4,18 @@
 TODO:
 """
 
-import os
 from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
 
-from faas_profiler_python.config import Config, ProfileContext, MeasuringState, Provider
+from faas_profiler_core.constants import Provider, Runtime
+from faas_profiler_core.models import FunctionContext
+
+from faas_profiler_python.config import Config, MeasuringState
 from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
 from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
-from faas_profiler_python.exporters import Exporter
+from faas_profiler_python.exporters import Exporter, ResultCollector
 from faas_profiler_python.core import BatchExecution, PeriodicProcess, split_plugin_list_by_subclass
 from faas_profiler_python.utilis import Loggable
 
@@ -63,9 +65,10 @@ class Profiler(Loggable):
         # Determine Cloud Provider: TODO: Make this dynamic
         self.provider = Provider.AWS
 
-        # Profiler Context
-        self.profile_context = ProfileContext(
-            self.config, os.getpid())
+        # Function Context
+        self.function_context = FunctionContext(
+            self.provider, Runtime.PYTHON, "foo", "foo.bar"
+        )
 
         # Distributed Tracer
         self.tracer = DistributedTracer(self.config, self.provider)
@@ -150,30 +153,12 @@ class Profiler(Loggable):
         self.logger.info(
             "[EXPORT]: Collecting results.")
 
-        # results_collector = ResultCollector(
-
-        # )
-
-        # results_collector = ResultsCollector(
-        #     config=self.config,
-        #     profile_context=self.profile_context,
-        #     captures=self.active_captures)
-
-        # for config_item in self.config.exporters:
-        #     try:
-        #         exporter = Exporter.factory(config_item.name)
-        #     except ValueError:
-        #         self.logger.error(
-        #             f"No exporter found with name {config_item.name}")
-        #         continue
-
-        #     try:
-        #         exporter(
-        #             self.profile_context,
-        #             config_item.parameters).dump(results_collector)
-        #     except Exception as err:
-        #         self.logger.error(
-        # f"Exporting results with {config_item.name} failed: {err}")
+        results_collector = ResultCollector(
+            function_context=self.function_context,
+            tracing_context=self.tracer.tracing_context,
+            inbound_context=self.tracer.inbound_context,
+            outbound_contexts=self.tracer.outbound_contexts)
+        print(results_collector.raw_data)
 
     def _start_default_measurements(self):
         """
@@ -185,7 +170,7 @@ class Profiler(Loggable):
         self.logger.info(
             "[DEFAULT MEASUREMENTS]: Initializing and starting.")
 
-        self.default_batch.initialize(self.profile_context)
+        self.default_batch.initialize(self.function_context)
         self.default_batch.start()
         self._default_measurements_started = True
 
@@ -199,7 +184,7 @@ class Profiler(Loggable):
         self.child_endpoint, self.parent_endpoint = Pipe()
         self.periodic_process = PeriodicProcess(
             batch=self.periodic_batch,
-            profile_context=self.profile_context,
+            profile_context=self.function_context,
             child_connection=self.child_endpoint,
             parent_connection=self.parent_endpoint)
 
