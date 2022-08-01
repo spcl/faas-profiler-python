@@ -4,14 +4,13 @@
 TODO:
 """
 
+from datetime import datetime
 from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
 
-from faas_profiler_core.constants import Provider, Runtime
-from faas_profiler_core.models import FunctionContext
-
 from faas_profiler_python.config import Config, MeasuringState
+from faas_profiler_python.function import resolve_function_context
 from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
 from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
@@ -47,6 +46,8 @@ class Profiler(Loggable):
 
     def __init__(self, config_file: str = None) -> None:
         super().__init__()
+        self.function_context = resolve_function_context()
+        self.function_context.invoked_at = datetime.now()
         # Load user configuration
         self.config = Config.load_file(config_file)
 
@@ -62,16 +63,8 @@ class Profiler(Loggable):
         self.default_batch = BatchExecution(default_measurements)
         self.capture_batch = BatchExecution(captures)
 
-        # Determine Cloud Provider: TODO: Make this dynamic
-        self.provider = Provider.AWS
-
-        # Function Context
-        self.function_context = FunctionContext(
-            self.provider, Runtime.PYTHON, "foo", "foo.bar"
-        )
-
         # Distributed Tracer
-        self.tracer = DistributedTracer(self.config, self.provider)
+        self.tracer = DistributedTracer(self.config, self.function_context.provider)
 
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
@@ -98,11 +91,14 @@ class Profiler(Loggable):
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
 
         try:
+            self.function_context.handler_executed_at = datetime.now()
             func_ret = func(*args, **kwargs)
         except Exception as ex:
+            self.function_context.handler_finished_at = datetime.now()
             self.logger.error(f"Function not successfully executed: {ex}")
             func_ret = None
         finally:
+            self.function_context.handler_finished_at = datetime.now()
             self.logger.info("-- FUNCTION EXCUTED --")
             self.stop()
 
@@ -153,6 +149,7 @@ class Profiler(Loggable):
         self.logger.info(
             "[EXPORT]: Collecting results.")
 
+        self.function_context.finished_at = datetime.now()
         results_collector = ResultCollector(
             function_context=self.function_context,
             tracing_context=self.tracer.tracing_context,
