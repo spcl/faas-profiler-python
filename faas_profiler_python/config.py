@@ -38,7 +38,9 @@ Plugins Config
 UnresolvedPlugin = namedtuple(
     'UnresolvedPlugin',
     'name parameters external_path')
-LoadedPlugin = namedtuple("LoadedPlugin", "cls parameters")
+LoadedPlugin = namedtuple(
+    "LoadedPlugin",
+    "cls parameters")
 
 
 class ConfigSyntaxError(SyntaxError):
