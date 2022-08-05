@@ -20,6 +20,19 @@ from functools import reduce
 from faas_profiler_core.constants import Provider
 
 """
+Exceptions
+"""
+
+
+class UnsupportedServiceError(RuntimeError):
+    pass
+
+
+class InjectionError(RuntimeError):
+    pass
+
+
+"""
 Plugins Config
 """
 UnresolvedPlugin = namedtuple(
