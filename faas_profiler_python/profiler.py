@@ -16,7 +16,7 @@ from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
 from faas_profiler_python.exporters import Exporter, ResultCollector
 from faas_profiler_python.core import BatchExecution, PeriodicProcess, split_plugin_list_by_subclass
-from faas_profiler_python.utilis import Loggable
+from faas_profiler_python.utilis import Loggable, invoke_instrumented_function
 
 
 def profile(config_file: str = None):
@@ -46,8 +46,11 @@ class Profiler(Loggable):
 
     def __init__(self, config_file: str = None) -> None:
         super().__init__()
+
+        # Resolve serverless function
         self.function_context = resolve_function_context()
         self.function_context.invoked_at = datetime.now()
+
         # Load user configuration
         self.config = Config.load_file(config_file)
 
@@ -64,7 +67,8 @@ class Profiler(Loggable):
         self.capture_batch = BatchExecution(captures)
 
         # Distributed Tracer
-        self.tracer = DistributedTracer(self.config, self.function_context.provider)
+        self.tracer = DistributedTracer(
+            self.config, self.function_context.provider)
 
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
@@ -88,23 +92,22 @@ class Profiler(Loggable):
         Profiles the given method and exports the results.
         """
         self.start(args, kwargs)
+
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
+        response, error, executed_at, finished_at = invoke_instrumented_function(
+            func, args, kwargs)
+        self.logger.info("-- FUNCTION EXCUTED --")
 
-        try:
-            self.function_context.handler_executed_at = datetime.now()
-            func_ret = func(*args, **kwargs)
-        except Exception as ex:
-            self.function_context.handler_finished_at = datetime.now()
-            self.logger.error(f"Function not successfully executed: {ex}")
-            func_ret = None
-        finally:
-            self.function_context.handler_finished_at = datetime.now()
-            self.logger.info("-- FUNCTION EXCUTED --")
-            self.stop()
+        self.function_context.handler_executed_at = executed_at
+        self.function_context.handler_finished_at = finished_at
 
+        self.stop()
         self.export()
 
-        return func_ret
+        if error:
+            raise error
+        else:
+            return response
 
     def start(
         self,
