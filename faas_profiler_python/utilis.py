@@ -9,8 +9,34 @@ from __future__ import annotations
 import json
 import logging
 
-from typing import Any
+from typing import Any, Callable
+from datetime import datetime
 from base64 import b64decode, b64encode
+
+
+def invoke_instrumented_function(
+    func: Callable,
+    func_args: tuple,
+    func_kwargs: dict
+) -> tuple:
+    """
+    Executes a function with timing and error capturing.
+
+    Returns
+    -------
+    tuple = response, error, invoked_at, finished_at
+    """
+    error = None
+    response = None
+    invoked_at = datetime.now()
+    try:
+        response = func(*func_args, **func_kwargs)
+    except Exception as exc:
+        error = exc
+    finally:
+        finished_at = datetime.now()
+
+    return response, error, invoked_at, finished_at
 
 
 def get_arg_by_key_or_pos(args, kwargs, pos, kw, default: Any = None):
