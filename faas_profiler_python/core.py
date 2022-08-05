@@ -11,8 +11,6 @@ import inspect
 import logging
 import traceback
 
-from faas_profiler_core.models import FunctionContext
-
 from faas_profiler_python.config import (
     MeasuringState,
     ProcessFeedback,
@@ -104,7 +102,7 @@ class BatchExecution(Loggable):
         for plugin_cls, parameters in self.plugins:
             try:
                 plugin_obj = plugin_cls()
-                plugin_obj.initialize(*args, **kwargs, parameters=parameters)
+                plugin_obj.initialize(*args, **kwargs, **parameters)
             except Exception as err:
                 self.logger.error(
                     f"Initializing {plugin_cls} failed: {err}. Traceback: {traceback.format_exc()}")
@@ -167,16 +165,16 @@ class PeriodicProcess(Process):
     def __init__(
         self,
         batch: Type[BatchExecution],
-        profile_context: Type[FunctionContext],
+        function_pid: int,
         parent_connection: Type[connection.Connection],
         child_connection: Type[connection.Connection],
         refresh_interval: float = 0.1
     ) -> None:
-        self.profile_context = profile_context
         self.parent_connection = parent_connection
         self.child_connection = child_connection
         self.refresh_interval = refresh_interval
         self.batch_execution = batch
+        self.function_pid = function_pid
 
         super(PeriodicProcess, self).__init__()
 
@@ -189,12 +187,12 @@ class PeriodicProcess(Process):
         Then stops all measurements and sends the results to the main process.
         """
         try:
-            measurement_process_pid = os.getpid()
+            process_pid = os.getpid()
             self._logger.info(
-                f"Measurement process started (pid={measurement_process_pid}).")
-            self.profile_context.periodic_process_pid = measurement_process_pid
+                f"Measurement process started (pid={process_pid}).")
 
-            self.batch_execution.initialize(self.profile_context)
+            self.batch_execution.initialize(
+                process_pid=process_pid, function_pid=self.function_pid)
             self.batch_execution.start()
             self.child_connection.send(ProcessFeedback(MeasuringState.STARTED))
 

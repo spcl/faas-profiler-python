@@ -5,6 +5,7 @@ TODO:
 """
 
 from datetime import datetime
+import os
 from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
@@ -78,6 +79,8 @@ class Profiler(Loggable):
         self.child_endpoint: Type[connection.Connection] = None
         self.parent_endpoint: Type[connection.Connection] = None
         self.periodic_process: Type[PeriodicProcess] = None
+
+        self.function_pid = os.getpid()
 
         self.logger.info((
             "[PROFILER PLAN]: \n"
@@ -179,7 +182,7 @@ class Profiler(Loggable):
         self.logger.info(
             "[DEFAULT MEASUREMENTS]: Initializing and starting.")
 
-        self.default_batch.initialize(self.function_context)
+        self.default_batch.initialize(function_pid=self.function_pid)
         self.default_batch.start()
         self._default_measurements_started = True
 
@@ -193,7 +196,7 @@ class Profiler(Loggable):
         self.child_endpoint, self.parent_endpoint = Pipe()
         self.periodic_process = PeriodicProcess(
             batch=self.periodic_batch,
-            profile_context=self.function_context,
+            function_pid=self.function_pid,
             child_connection=self.child_endpoint,
             parent_connection=self.parent_endpoint)
 
