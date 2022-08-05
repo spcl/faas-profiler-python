@@ -5,13 +5,14 @@ Module for all AWS specific logic.
 """
 
 from collections import namedtuple
+from datetime import datetime
 from typing import Any, Tuple, Type
 
 from faas_profiler_core.models import TracingContext, InboundContext
 from faas_profiler_core.constants import (
     Provider,
     TRACE_ID_HEADER,
-    INVOCATION_ID_HEADER,
+    RECORD_ID_HEADER,
     PARENT_ID_HEADER,
     TRACE_CONTEXT_KEY,
     TriggerSynchronicity,
@@ -19,7 +20,20 @@ from faas_profiler_core.constants import (
     AWSService
 )
 
-from faas_profiler_python.utilis import Loggable, lowercase_keys, get_idx_safely
+from faas_profiler_python.utilis import (
+    Loggable,
+    decode_base64_json_to_dict,
+    encode_dict_to_base64_json,
+    lowercase_keys, get_idx_safely
+)
+from faas_profiler_python.config import (
+    UnsupportedServiceError,
+    InjectionError
+)
+
+"""
+ARN Parsing
+"""
 
 ARN = namedtuple(
     "ARN",
@@ -124,7 +138,11 @@ class AWSEvent(Loggable):
         Returns context about the trigger
         """
         trigger_ctx = InboundContext(
-            Provider.AWS, self.service, self.operation, {})
+            Provider.AWS,
+            self.service,
+            self.operation,
+            {},
+            invoked_at=datetime.now())
 
         if self.service == AWSService.S3:
             self._add_s3_trigger_context(trigger_ctx)
@@ -147,7 +165,7 @@ class AWSEvent(Loggable):
         headers = lowercase_keys(self.data.get("headers", {}))
         return TracingContext(
             trace_id=headers.get(TRACE_ID_HEADER),
-            record_id=headers.get(INVOCATION_ID_HEADER),
+            record_id=headers.get(RECORD_ID_HEADER),
             parent_id=headers.get(PARENT_ID_HEADER))
 
     def _sns_tracing_context(self) -> Type[TracingContext]:
@@ -166,7 +184,7 @@ class AWSEvent(Loggable):
         context = detail.get(TRACE_CONTEXT_KEY, {})
         return TracingContext(
             trace_id=context.get(TRACE_CONTEXT_KEY),
-            record_id=context.get(INVOCATION_ID_HEADER),
+            record_id=context.get(RECORD_ID_HEADER),
             parent_id=context.get(PARENT_ID_HEADER))
 
     def _add_s3_trigger_context(
@@ -190,7 +208,6 @@ class AWSEvent(Loggable):
             "request_id", _s3_record.get(
                 "responseelements", {}).get("x-amz-request-id"))
         trigger_context.set_identifier("bucket_name", _bucket.get("name"))
-        trigger_context.set_identifier("bucket_arn", _bucket.get("arn"))
         trigger_context.set_identifier("object_key", _object.get("key"))
 
     # Helpers
@@ -327,5 +344,178 @@ class AWSContext(Loggable):
         """
         return TracingContext(
             trace_id=self.custom_context.get(TRACE_ID_HEADER),
-            record_id=self.custom_context.get(INVOCATION_ID_HEADER),
+            record_id=self.custom_context.get(RECORD_ID_HEADER),
             parent_id=self.custom_context.get(PARENT_ID_HEADER))
+
+
+"""
+AWS Service detection
+"""
+
+SERVICE_BY_ENDPOINT = {
+    "lambda": AWSService.LAMBDA,
+    "s3": AWSService.S3
+}
+
+
+def service_by_outbound_endpoint(endpoint_prefix: str) -> AWSService:
+    """
+    Returns the AWS Service by service endpoint prefix
+    """
+    return SERVICE_BY_ENDPOINT.get(endpoint_prefix, AWSService.UNIDENTIFIED)
+
+
+"""
+AWS Operation detection
+"""
+
+OPERATION_BY_NAME = {
+    AWSService.LAMBDA: {
+        "invoke": AWSOperation.LAMBDA_INVOKE
+    }
+}
+
+
+def operation_by_operation_name(
+        service: AWSService,
+        operation_name: str) -> AWSOperation:
+    """
+    Returns the AWS Operation based on service and operation name
+    """
+    service_operations = OPERATION_BY_NAME.get(service)
+    if service_operations:
+        return service_operations.get(
+            operation_name, AWSOperation.UNIDENTIFIED)
+
+    return AWSOperation.UNIDENTIFIED
+
+
+"""
+AWS outbound identifier detection
+"""
+
+
+def get_outbound_identifiers(
+    service: AWSService,
+    operation: AWSOperation,
+    api_parameters: dict = {},
+    api_response: dict = {}
+) -> dict:
+    """
+    Returns a dict of identifiers for the outbound AWS call.
+    """
+    identifiers = {}
+
+    api_parameters = lowercase_keys(api_parameters)
+    api_response = lowercase_keys(api_response)
+
+    request_id = api_response.get("responsemetadata", {}).get("RequestId")
+    if request_id:
+        identifiers["request_id"] = request_id
+
+    if service == AWSService.S3:
+        service_identifiers_function = get_outbound_s3_identifiers
+    elif service == AWSService.LAMBDA:
+        service_identifiers_function = get_outbound_lambda_identifiers
+
+    if service_identifiers_function:
+        identifiers.update(service_identifiers_function(
+            operation, api_parameters, api_response))
+
+    return identifiers
+
+
+def get_outbound_s3_identifiers(
+    operation: AWSOperation,
+    api_parameters: dict,
+    api_response: dict
+) -> dict:
+    """
+    Extracts outbound s3 identifiers
+    """
+    identifiers = {}
+    _bucket_name = api_parameters.get("bucket")
+    _key = api_parameters.get("key")
+
+    if _bucket_name:
+        identifiers["bucket"] = _bucket_name
+    if _key:
+        identifiers["key"] = _key
+
+    return identifiers
+
+
+def get_outbound_lambda_identifiers(
+    operation: AWSOperation,
+    api_parameters: dict,
+    api_response: dict
+) -> dict:
+    """
+    Extracts outbound Lambda identifiers
+    """
+    _function_name = api_parameters.get("functionname")
+    if _function_name:
+        return {"function_name": _function_name}
+
+    return {}
+
+
+"""
+AWS Injection
+"""
+
+
+def inject_lambda_call(
+    operation: AWSOperation,
+    api_parameters: dict,
+    injection_data: dict
+):
+    """
+    Injects data to AWS Lambda call
+
+    The Client Context is passed as Base64 object in the api parameters.
+    Thus we need to encode the context (if existing), add our tracing context
+    and then decode in back to Base64
+
+    More info: https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
+    """
+    client_context = {}
+    if "ClientContext" in api_parameters:
+        try:
+            client_context = decode_base64_json_to_dict(
+                api_parameters["ClientContext"])
+        except ValueError as err:
+            raise InjectionError(
+                f"Could not decode client context from base64 to json: {err}")
+
+    # Injection
+    client_context.setdefault("custom", {}).update(injection_data)
+
+    try:
+        api_parameters["ClientContext"] = encode_dict_to_base64_json(
+            client_context)
+    except ValueError as err:
+        raise InjectionError(
+            f"Could not encode client context from json to base64: {err}")
+
+
+INJECTABLE_SERVICES = {
+    AWSService.LAMBDA: inject_lambda_call
+}
+
+
+def inject_aws_call(
+    service: AWSService,
+    operation: AWSOperation,
+    api_parameters: dict,
+    injection_data: dict,
+) -> None:
+    """
+    Injects data into api parameters
+    """
+    if service not in INJECTABLE_SERVICES:
+        raise UnsupportedServiceError(
+            f"AWS API call {service} does not support injection.")
+
+    INJECTABLE_SERVICES[service](
+        operation, api_parameters, injection_data)
