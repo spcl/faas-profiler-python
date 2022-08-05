@@ -67,7 +67,6 @@ class ResultCollector(Loggable):
             tracing_context=tracing_context,
             inbound_context=inbound_context,
             outbound_contexts=outbound_contexts)
-
         self._raw_data = self.record.dump()
 
     @property
