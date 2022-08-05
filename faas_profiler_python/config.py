@@ -4,14 +4,11 @@
 FaaS-Profiler configuration
 """
 from __future__ import annotations
-from abc import ABC, abstractmethod
 
 import logging
-from uuid import uuid4
-import pkg_resources
 import yaml
 
-from os.path import abspath, exists
+from os.path import exists
 from enum import Enum
 from dataclasses import dataclass
 from typing import Any, Dict, List, Type
@@ -22,17 +19,6 @@ from functools import reduce
 
 from faas_profiler_core.constants import Provider
 
-# TODO: make case dest for AWS, local usw
-TMP_RESULT_DIR = abspath("/tmp")
-
-
-def get_faas_profiler_version():
-    try:
-        return pkg_resources.get_distribution("py_faas_profiler").version
-    except pkg_resources.DistributionNotFound:
-        return "-"
-
-
 """
 Plugins Config
 """
@@ -40,27 +26,6 @@ UnresolvedPlugin = namedtuple(
     'UnresolvedPlugin',
     'name parameters external_path')
 LoadedPlugin = namedtuple("LoadedPlugin", "cls parameters")
-
-
-class TriggerSynchronicity(Enum):
-    """
-    Enumeration of different trigger synchronicities
-    """
-    UNIDENTIFIED = 'unidentified'
-    ASYNC = "async"
-    SYNC = "sync"
-
-
-class Service(Enum):
-    """
-    Base class for provider services
-    """
-
-
-class Operation(Enum):
-    """
-    Base class for operations on provider services.
-    """
 
 
 class ConfigSyntaxError(SyntaxError):
@@ -232,98 +197,3 @@ class MeasuringState(Enum):
 class ProcessFeedback:
     state: MeasuringState
     data: Any = None
-
-
-"""
-Contexts
-"""
-
-
-@dataclass
-class Context(ABC):
-    """
-    Abstract base class for contexts in FaaS-Profiler
-    """
-
-    @abstractmethod
-    def to_record(self) -> dict:
-        """
-        Return the context as dict, so that it can be added as in the record.
-        """
-        pass
-
-
-"""
-Distrubted Tracing Config
-"""
-
-# https://specs.openstack.org/openstack/api-wg/guidelines/headers.html
-TRACE_ID_HEADER = "FaaS-Profiler-Trace-ID"
-INVOCATION_ID_HEADER = "FaaS-Profiler-Invocation-ID"
-PARENT_ID_HEADER = "FaaS-Profiler-Parent-ID"
-
-TRACE_CONTEXT_KEY = "_faas_profiler_context"
-
-
-@dataclass
-class TracingContext(Context):
-    trace_id: str = None
-    invocation_id: str = None
-    parent_id: str = None
-
-    @classmethod
-    def create_from_payload_tracing_context(
-        cls,
-        payload_tracing_context: Type[TracingContext]
-    ) -> Type[TracingContext]:
-        """
-        Creates a new context based on the received tracing context.
-        """
-        if payload_tracing_context.trace_id:
-            trace_id = payload_tracing_context.trace_id
-        else:
-            trace_id = uuid4()
-
-        if payload_tracing_context.invocation_id:
-            parent_id = payload_tracing_context.invocation_id
-        else:
-            parent_id = None
-
-        return cls(
-            trace_id=trace_id,
-            invocation_id=uuid4(),
-            parent_id=parent_id)
-
-    @property
-    def is_complete(self) -> bool:
-        """
-        Returns True if trace context is complete
-        """
-        return (
-            self.trace_id is not None and
-            self.invocation_id is not None and
-            self.parent_id is not None)
-
-    def to_injectable(self) -> dict:
-        """
-        Returns the context as injectable context.
-        """
-        ctx = {}
-        if self.trace_id:
-            ctx[TRACE_ID_HEADER] = str(self.trace_id)
-        if self.invocation_id:
-            ctx[INVOCATION_ID_HEADER] = str(self.invocation_id)
-        if self.parent_id:
-            ctx[PARENT_ID_HEADER] = str(self.parent_id)
-
-        return ctx
-
-    def to_record(self) -> dict:
-        """
-        Returns the tracing context as dict
-        """
-        return {
-            "trace_id": str(self.trace_id),
-            "invocation_id": str(self.invocation_id),
-            "parent_id": str(self.parent_id)
-        }
