@@ -6,12 +6,6 @@ git+https://${GITHUB_ACCESS_TOKEN}@github.com/maltewae/faas-profiler-core
 ## Package to parse ymal
 pyyaml
 
-## Package to validate JSON schema
-jsonschema
-
-## Package to create safely keys
-inflection
-
 ## Packge for monkey patching support
 wrapt
 
