@@ -12,15 +12,14 @@ from typing import List, Set, Type
 from functools import reduce
 
 from faas_profiler_python.measurements import PeriodicMeasurement
-from faas_profiler_python.config import ProfileContext
 
 
 class Connections(PeriodicMeasurement):
 
     def initialize(
         self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
+        function_pid: int = None,
+        **kwargs
     ) -> None:
         self.process = None
         self.connections: List[psutil._common.pconn] = []
@@ -29,7 +28,7 @@ class Connections(PeriodicMeasurement):
         self._results = {}
 
         try:
-            self.process = psutil.Process(profile_context.pid)
+            self.process = psutil.Process(function_pid)
         except psutil.Error as err:
             self._logger.warn(f"Could not set process: {err}")
 
@@ -71,10 +70,10 @@ class IOCounters(PeriodicMeasurement):
 
     def initialize(
         self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
+        per_interface: bool = False,
+        **kwargs
     ) -> None:
-        self.per_interface = parameters.get("per_interface", False)
+        self.per_interface = per_interface
 
         self.start_snapshot: Type[psutil.snetio] = None
         self.end_snapshot: Type[psutil.snetio] = None

@@ -6,29 +6,30 @@ Module for cpu measurements
 
 import psutil
 
-from typing import List, Type
+from typing import List
 from time import time
 from dataclasses import asdict
 
 from faas_profiler_python.measurements import PeriodicMeasurement
-from faas_profiler_python.config import ProfileContext, MeasuringPoint, average_measuring_points
+from faas_profiler_python.config import MeasuringPoint, average_measuring_points
 
 
 class Usage(PeriodicMeasurement):
 
     def initialize(
         self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
+        include_children: bool = False,
+        process_pid: int = None,
+        function_pid: int = None,
+        **kwargs
     ) -> None:
-        self.include_children = parameters.get("include_children", True)
-
-        self._own_process_id = profile_context.measurement_process_pid
+        self._include_children = include_children
+        self._own_process_id = process_pid
         self._measuring_points: List[MeasuringPoint] = []
         self._average_usage = 0
 
         try:
-            self.process = psutil.Process(profile_context.pid)
+            self.process = psutil.Process(function_pid)
         except psutil.Error as err:
             self.logger.warn(f"Could not set process: {err}")
 
@@ -60,7 +61,7 @@ class Usage(PeriodicMeasurement):
         try:
             percent = self.process.cpu_percent()
 
-            if self.include_children:
+            if self._include_children:
                 try:
                     for child_process in self.process.children(recursive=True):
                         if self._own_process_id is None or child_process.pid != self._own_process_id:

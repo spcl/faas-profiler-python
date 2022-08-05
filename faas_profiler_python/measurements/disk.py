@@ -5,10 +5,11 @@ Module for network measurements:
 - DiskIOCounters
 """
 
+
 import psutil
 
 from typing import Type
-from faas_profiler_python.config import ProfileContext
+
 from faas_profiler_python.measurements import Measurement
 
 
@@ -16,8 +17,8 @@ class IOCounters(Measurement):
 
     def initialize(
         self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
+        function_pid: int = None,
+        **kwargs
     ) -> None:
         self.start_snapshot: Type[psutil._common.pio] = None
         self.end_snapshot: Type[psutil._common.pio] = None
@@ -25,7 +26,7 @@ class IOCounters(Measurement):
         self._io_delta = {}
 
         try:
-            self.process = psutil.Process(profile_context.pid)
+            self.process = psutil.Process(function_pid)
         except psutil.AccessDenied:
             self.process = None
 

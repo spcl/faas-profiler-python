@@ -5,10 +5,8 @@ Module for common measurements
 """
 
 from time import time
-from typing import Type
 
 from faas_profiler_python.measurements import Measurement
-from faas_profiler_python.config import ProfileContext
 
 
 class WallTime(Measurement):
@@ -18,11 +16,7 @@ class WallTime(Measurement):
     The measurement runs in the same process as the function.
     """
 
-    def initialize(
-        self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
-    ) -> None:
+    def initialize(self, *args, **kwargs) -> None:
         self.start_time: float = None
         self.end_time: float = None
 

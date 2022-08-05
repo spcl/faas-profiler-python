@@ -12,11 +12,9 @@ import os
 import pkg_resources
 import psutil
 
-from typing import Type
 from datetime import datetime
 
 from faas_profiler_python.measurements import Measurement
-from faas_profiler_python.config import ProfileContext
 
 
 class Environment(Measurement):
@@ -60,16 +58,3 @@ class OperatingSystem(Measurement):
     def _get_boot_time(self) -> str:
         bt = datetime.fromtimestamp(psutil.boot_time())
         return f"{bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}"
-
-
-class Payload(Measurement):
-
-    def initialize(
-        self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
-    ) -> None:
-        self.profile_context = profile_context
-
-    def results(self) -> dict:
-        return {}

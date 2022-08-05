@@ -7,10 +7,7 @@ Defines abstract base class for all measurements and measuring points
 """
 
 from __future__ import annotations
-from typing import Type
 
-
-from faas_profiler_python.config import ProfileContext
 from faas_profiler_python.core import BasePlugin
 from faas_profiler_python.utilis import Loggable
 
@@ -26,11 +23,7 @@ class Measurement(BasePlugin, Loggable):
     Cannot be initialised.
     """
 
-    def initialize(
-        self,
-        profile_context: Type[ProfileContext],
-        parameters: dict = {}
-    ) -> None:
+    def initialize(self, *args, **kwargs) -> None:
         pass
 
     def start(self) -> None:
