@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List, Type
 from uuid import uuid4
 
-from faas_profiler_core.outbound import OutboundRequestTable, NoopOutboundRequestTable
+from faas_profiler_core.requests import RequestTable, NoopRequestTable
 from faas_profiler_core.constants import Provider
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
 
@@ -51,7 +51,7 @@ class DistributedTracer(Loggable):
         self._outbound_contexts: List[Type[OutboundContext]] = []
         self._tracing_context: Type[TracingContext] = None
 
-        self._outbound_request_table = self._initialize_outbound_request_table()
+        self._request_table = self._initialize_request_table()
 
         self._active_outbound_patchers: List[Type[FunctionPatcher]] = []
 
@@ -142,9 +142,7 @@ class DistributedTracer(Loggable):
         outbound_context: OutboundContext
             Context of the outbound request.
         """
-        self._outbound_request_table.store_request(
-            outbound_context, self.tracing_context)
-
+        self._request_table.record_outbound_request(outbound_context, self.tracing_context)
         self._outbound_contexts.append(outbound_context)
 
     """
@@ -178,21 +176,21 @@ class DistributedTracer(Loggable):
             record_id=uuid4(),
             parent_id=parent_id)
 
-    def _initialize_outbound_request_table(self):
+    def _initialize_request_table(self):
         """
-        Initializes a new Outbound Request Table based on the provider
+        Initializes a new Request Table based on the provider
         """
         try:
-            outbound_table_cls = OutboundRequestTable.factory(self.provider)
-            outbound_request_table = outbound_table_cls(
+            request_table_cls = RequestTable.factory(self.provider)
+            request_table = request_table_cls(
                 **self.config.outbound_requests_tables.get(self.provider, {}))
             self.logger.info(
-                f"Initialized new Outbound Request Table {outbound_table_cls.__name__} for {self.provider}")
+                f"Initialized new Outbound Request Table {request_table_cls.__name__} for {self.provider}")
 
             # TODO: AWS specific
-            ignore_instance_from_patching(outbound_request_table.dynamodb)
-            return outbound_request_table
+            ignore_instance_from_patching(request_table.dynamodb)
+            return request_table
         except Exception as err:
             self.logger.error(
                 f"Could not initialize Outbound Request Table for {self.provider}: {err}")
-            return NoopOutboundRequestTable()
+            return NoopRequestTable()
