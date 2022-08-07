@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List, Type
 from uuid import uuid4
 
-from faas_profiler_core.requests import RequestTable, NoopRequestTable
+from faas_profiler_core.requests import RequestTable, NoopRequestTable, RecordType, make_identifier_string
 from faas_profiler_core.constants import Provider
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
 
@@ -54,6 +54,8 @@ class DistributedTracer(Loggable):
         self._request_table = self._initialize_request_table()
 
         self._active_outbound_patchers: List[Type[FunctionPatcher]] = []
+
+        self._recorded_identifier = set()
 
     """
     Properties
@@ -142,8 +144,16 @@ class DistributedTracer(Loggable):
         outbound_context: OutboundContext
             Context of the outbound request.
         """
-        self._request_table.record_outbound_request(outbound_context, self.tracing_context)
+        identifier_string = make_identifier_string(RecordType.OUTBOUND, outbound_context.identifier)
+        if identifier_string in self._recorded_identifier:
+            self.logger.info(
+                f"Skip recording {identifier_string}. Already recorded.")
+            return
+
+        # self._request_table.record_outbound_request(outbound_context, self.tracing_context)
         self._outbound_contexts.append(outbound_context)
+
+        self._recorded_identifier.add(identifier_string)
 
     """
     Private methods
