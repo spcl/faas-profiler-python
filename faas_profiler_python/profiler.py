@@ -9,6 +9,7 @@ import os
 from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
+from uuid import uuid4
 
 from faas_profiler_python.config import Config, MeasuringState
 from faas_profiler_python.function import resolve_function_context
@@ -81,6 +82,10 @@ class Profiler(Loggable):
         self.periodic_process: Type[PeriodicProcess] = None
 
         self.function_pid = os.getpid()
+
+        self.periodic_results_path = os.path.join(
+            self.config.tmp_result_storage,
+            f"{uuid4()}.json")
 
         self.logger.info((
             "[PROFILER PLAN]: \n"
@@ -160,7 +165,9 @@ class Profiler(Loggable):
             function_context=self.function_context,
             tracing_context=self.tracer.tracing_context,
             inbound_context=self.tracer.inbound_context,
-            outbound_contexts=self.tracer.outbound_contexts)
+            outbound_contexts=self.tracer.outbound_contexts,
+            periodic_results_file=self.periodic_results_path,
+            default_batch=self.default_batch)
 
         for exporter_plugin in self.exporters:
             try:
@@ -197,6 +204,7 @@ class Profiler(Loggable):
         self.periodic_process = PeriodicProcess(
             batch=self.periodic_batch,
             function_pid=self.function_pid,
+            result_storage_path=self.periodic_results_path,
             child_connection=self.child_endpoint,
             parent_connection=self.parent_endpoint)
 

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
+import json
 from typing import List, Type
 from multiprocessing import Process, connection
 
@@ -69,7 +70,7 @@ class BasePlugin:
                 _plugin = getattr(imported_module, _klass)
                 if inspect.isclass(_plugin) and issubclass(_plugin, cls):
                     loaded_plugins.append(LoadedPlugin(
-                        _plugin, requested_plugin.parameters))
+                        _name, _plugin, requested_plugin.parameters))
                     cls._logger.info(
                         f"Loaded plugin for {_name} at {_full_module_name}")
                 else:
@@ -93,13 +94,13 @@ class BatchExecution(Loggable):
     ) -> None:
         super().__init__()
         self.plugins = plugins
-        self.plugin_objs = []
+        self.plugin_objs = {}
 
     def initialize(self, *args, **kwargs):
         """
         Initializes all plugins
         """
-        for plugin_cls, parameters in self.plugins:
+        for name, plugin_cls, parameters in self.plugins:
             try:
                 plugin_obj = plugin_cls()
                 plugin_obj.initialize(*args, **kwargs, **parameters)
@@ -107,13 +108,13 @@ class BatchExecution(Loggable):
                 self.logger.error(
                     f"Initializing {plugin_cls} failed: {err}. Traceback: {traceback.format_exc()}")
             else:
-                self.plugin_objs.append(plugin_obj)
+                self.plugin_objs[name] = plugin_obj
 
     def start(self, *args, **kwargs):
         """
         Starts all plugins.
         """
-        for plugin_obj in self.plugin_objs:
+        for plugin_obj in self.plugin_objs.values():
             try:
                 plugin_obj.start(*args, **kwargs)
             except Exception as err:
@@ -124,7 +125,7 @@ class BatchExecution(Loggable):
         """
         Triggers all measuring methods.
         """
-        for plugin_obj in self.plugin_objs:
+        for plugin_obj in self.plugin_objs.values():
             try:
                 plugin_obj.measure(*args, **kwargs)
             except Exception as err:
@@ -135,18 +136,35 @@ class BatchExecution(Loggable):
         """
         Stops all plugins.
         """
-        for plugin_obj in self.plugin_objs:
+        for plugin_obj in self.plugin_objs.values():
             try:
                 plugin_obj.stop(*args, **kwargs)
             except Exception as err:
                 self.logger.error(
                     f"Measuring {plugin_obj} failed: {err}. Traceback: {traceback.format_exc()}")
 
+    def export_results(self) -> list:
+        """
+        Returns a list of results
+        """
+        results = []
+        for name, plugin_obj in self.plugin_objs.items():
+            try:
+                results.append({
+                    "name": name,
+                    "results": plugin_obj.results()
+                })
+            except Exception as err:
+                self.logger.error(
+                    f"Exporting results for {plugin_obj} failed: {err}. Traceback: {traceback.format_exc()}")
+
+        return results
+
     def deinitialize(self, *args, **kwargs):
         """
         deinitialize all plugins.
         """
-        for plugin_obj in self.plugin_objs:
+        for plugin_obj in self.plugin_objs.values():
             try:
                 plugin_obj.deinitialize(*args, **kwargs)
             except Exception as err:
@@ -166,6 +184,7 @@ class PeriodicProcess(Process):
         self,
         batch: Type[BatchExecution],
         function_pid: int,
+        result_storage_path: str,
         parent_connection: Type[connection.Connection],
         child_connection: Type[connection.Connection],
         refresh_interval: float = 0.1
@@ -175,6 +194,7 @@ class PeriodicProcess(Process):
         self.refresh_interval = refresh_interval
         self.batch_execution = batch
         self.function_pid = function_pid
+        self.result_storage_path = result_storage_path
 
         super(PeriodicProcess, self).__init__()
 
@@ -209,6 +229,10 @@ class PeriodicProcess(Process):
 
             self.batch_execution.stop()
             self.child_connection.send(ProcessFeedback(MeasuringState.STOPPED))
+
+            results = self.batch_execution.export_results()
+            with open(self.result_storage_path, "w+") as fp:
+                json.dump(results, fp)
 
             self.batch_execution.deinitialize()
         except Exception as e:

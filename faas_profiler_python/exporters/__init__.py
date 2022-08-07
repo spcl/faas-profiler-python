@@ -6,6 +6,7 @@ Module for exporting and collecting results.
 from __future__ import annotations
 
 import json
+import os
 from uuid import UUID, uuid4
 import yaml
 
@@ -16,10 +17,11 @@ from faas_profiler_core.models import (
     OutboundContext,
     TracingContext,
     TraceRecord,
-    FunctionContext
+    FunctionContext,
+    RecordData
 )
 
-from faas_profiler_python.core import BasePlugin
+from faas_profiler_python.core import BasePlugin, BatchExecution
 from faas_profiler_python.utilis import Loggable
 
 
@@ -61,13 +63,21 @@ class ResultCollector(Loggable):
         function_context: Type[FunctionContext],
         tracing_context: Type[TracingContext],
         inbound_context: Type[InboundContext],
-        outbound_contexts: List[Type[OutboundContext]]
+        outbound_contexts: List[Type[OutboundContext]],
+        periodic_results_file: str,
+        default_batch: Type[BatchExecution]
     ) -> None:
+        periodic_results = self._read_periodic_results_file(
+            periodic_results_file)
+        default_results = default_batch.export_results()
+
+        self.results = periodic_results + default_results
         self.record = TraceRecord(
             function_context=function_context,
             tracing_context=tracing_context,
             inbound_context=inbound_context,
-            outbound_contexts=outbound_contexts)
+            outbound_contexts=outbound_contexts,
+            data=[RecordData.load(r) for r in self.results])
         self._raw_data = self.record.dump()
 
         if tracing_context:
@@ -94,3 +104,10 @@ class ResultCollector(Loggable):
         Returns the data formatted.
         """
         return formatter(self.raw_data)
+
+    def _read_periodic_results_file(self, periodic_results_file: str) -> list:
+        if not os.path.exists(periodic_results_file):
+            return []
+
+        with open(periodic_results_file, "r") as fp:
+            return json.load(fp)

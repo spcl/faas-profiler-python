@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import yaml
 
-from os.path import exists
+from os.path import exists, abspath
 from enum import Enum
 from dataclasses import dataclass
 from typing import Any, Dict, List, Type
@@ -40,7 +40,7 @@ UnresolvedPlugin = namedtuple(
     'name parameters external_path')
 LoadedPlugin = namedtuple(
     "LoadedPlugin",
-    "cls parameters")
+    "name cls parameters")
 
 
 class ConfigSyntaxError(SyntaxError):
@@ -140,6 +140,13 @@ class Config:
         Returns a List of Entities for each requested exporter
         """
         return self._exporters
+
+    @property
+    def tmp_result_storage(self) -> str:
+        """
+        Returns path to temporaly result storge
+        """
+        return abspath("/tmp")
 
     def _parse_to_plugins(self, key: str) -> List[UnresolvedPlugin]:
         entities = []
