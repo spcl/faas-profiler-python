@@ -165,7 +165,7 @@ class Profiler(Loggable):
         for exporter_plugin in self.exporters:
             try:
                 exporter = exporter_plugin.cls(
-                    parameters=exporter_plugin.parameters)
+                    **exporter_plugin.parameters)
 
                 exporter.export(results_collector)
             except Exception as err:
