@@ -64,6 +64,11 @@ def parse_aws_arn(arn: str) -> Type[ARN]:
         resource=resource)
 
 
+"""
+AWS Context Resolving
+"""
+
+
 class AWSEvent(Loggable):
 
     def __init__(
@@ -204,11 +209,11 @@ class AWSEvent(Loggable):
             "object_etag": _object.get("eTag")
         })
 
-        trigger_context.set_identifier(
-            "request_id", _s3_record.get(
-                "responseelements", {}).get("x-amz-request-id"))
-        trigger_context.set_identifier("bucket_name", _bucket.get("name"))
-        trigger_context.set_identifier("object_key", _object.get("key"))
+        trigger_context.set_identifiers({
+            "request_id": _s3_record.get("responseelements", {}).get("x-amz-request-id"),
+            "object_key": _object.get("key"),
+            "bucket_name": _bucket.get("name")
+        })
 
     # Helpers
 
@@ -372,6 +377,9 @@ AWS Operation detection
 OPERATION_BY_NAME = {
     AWSService.LAMBDA: {
         "invoke": AWSOperation.LAMBDA_INVOKE
+    },
+    AWSService.S3: {
+        "putobject": AWSOperation.S3_OBJECT_CREATE
     }
 }
 
@@ -438,9 +446,9 @@ def get_outbound_s3_identifiers(
     _key = api_parameters.get("key")
 
     if _bucket_name:
-        identifiers["bucket"] = _bucket_name
+        identifiers["bucket_name"] = _bucket_name
     if _key:
-        identifiers["key"] = _key
+        identifiers["object_key"] = _key
 
     return identifiers
 
