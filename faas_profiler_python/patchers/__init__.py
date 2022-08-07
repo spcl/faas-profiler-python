@@ -87,7 +87,7 @@ class FunctionPatcher(BasePlugin, Loggable):
         self._deinitialize_patch()
 
     """
-    Public Intetface
+    Public Interfaces
     - register_observer
     - activate
     - deactivate
@@ -258,13 +258,13 @@ class FunctionPatcher(BasePlugin, Loggable):
         outbound_context = self._execute_extract_outbound_context(
             patch_context)
         if outbound_context:
-            self._notify_observers(outbound_context)
-
             outbound_context.invoked_at = invoked_at
             outbound_context.finished_at = finished_at
 
             outbound_context.has_error = error is not None
             outbound_context.error_message = str(error) if error else ""
+
+            self._notify_observers(outbound_context)
 
         if patch_context.error:
             raise patch_context.error
