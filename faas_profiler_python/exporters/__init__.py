@@ -6,6 +6,7 @@ Module for exporting and collecting results.
 from __future__ import annotations
 
 import json
+from uuid import UUID, uuid4
 import yaml
 
 from typing import List, Type, Any
@@ -43,7 +44,7 @@ class Exporter(BasePlugin, Loggable):
     Base class for all exporters in FaaS Profiler.
     """
 
-    def __init__(self, parameters: dict = {}) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__()
 
     def export(self, results_collector: Type[ResultCollector]):
@@ -69,12 +70,24 @@ class ResultCollector(Loggable):
             outbound_contexts=outbound_contexts)
         self._raw_data = self.record.dump()
 
+        if tracing_context:
+            self._record_id = tracing_context.record_id
+        else:
+            self._record_id = uuid4()
+
     @property
     def raw_data(self) -> dict:
         """
         Returns data as dict
         """
         return self._raw_data
+
+    @property
+    def record_id(self) -> UUID:
+        """
+        Returns the record ID for the results
+        """
+        return self._record_id
 
     def format(self, formatter=json_formatter) -> Any:
         """
