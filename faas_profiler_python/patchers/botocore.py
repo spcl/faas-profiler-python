@@ -85,7 +85,8 @@ class BotocoreAPI(FunctionPatcher):
             http_method, http_uri = self._get_http_info(meta, operation_name)
 
             outbound_context.set_tags({
-                "parameters": api_parameters,
+                "parameters": {
+                    str(k): str(v) for k, v in api_parameters.items()},
                 "request_method": http_method,
                 "request_url": getattr(meta, "endpoint_url"),
                 "request_status": api_response.get("ResponseMetadata", {}).get("HTTPStatusCode"),
