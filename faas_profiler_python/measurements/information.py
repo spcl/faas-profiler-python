@@ -15,23 +15,25 @@ import psutil
 from datetime import datetime
 
 from faas_profiler_python.measurements import Measurement
+from faas_profiler_core.models import (
+    InformationEnvironment,
+    InformationOperatingSystem
+)
 
 
 class Environment(Measurement):
 
     def results(self) -> dict:
-        return {
-            "runtime": {
-                "name": "python",
-                "version": sys.version,
-                "implementation": platform.python_implementation(),
-                "compiler": platform.python_compiler()
-            },
-            "byteOrder": sys.byteorder,
-            "platform": sys.platform,
-            "interpreterPath": sys.executable,
-            "Packages": self._installed_packages(),
-        }
+        return InformationEnvironment(
+            runtime_name="python",
+            runtime_version=sys.version,
+            runtime_implementation=platform.python_implementation(),
+            runtime_compiler=platform.python_compiler(),
+            byte_order=sys.byteorder,
+            platform=sys.platform,
+            interpreter_path=sys.executable,
+            packages=self._installed_packages()
+        ).dump()
 
     def _installed_packages(self) -> list:
         try:
@@ -47,14 +49,10 @@ class OperatingSystem(Measurement):
 
     def results(self) -> dict:
         uname = os.uname()
-        return {
-            "bootTime": self._get_boot_time(),
-            "system": uname.sysname,
-            "nodeName": uname.nodename,
-            "release": uname.release,
-            "machine": uname.machine,
-        }
-
-    def _get_boot_time(self) -> str:
-        bt = datetime.fromtimestamp(psutil.boot_time())
-        return f"{bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}"
+        return InformationOperatingSystem(
+            boot_time=datetime.fromtimestamp(psutil.boot_time()),
+            system=uname.sysname,
+            node_name=uname.nodename,
+            release=uname.release,
+            machine=uname.machine
+        ).dump()
