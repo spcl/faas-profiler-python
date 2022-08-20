@@ -15,8 +15,6 @@ from typing import Any, Dict, List, Type
 from collections import namedtuple
 
 from faas_profiler_python.utilis import lowercase_keys
-from functools import reduce
-
 from faas_profiler_core.constants import Provider
 
 """
@@ -187,26 +185,6 @@ class Config:
                 tables[provider] = table_config.get("parameters", {})
 
         return tables
-
-
-@dataclass
-class MeasuringPoint:
-    """
-    Data class for measuring points during parallel measurements
-    """
-    timestamp: int
-    data: Any
-
-
-def average_measuring_points(points: List[MeasuringPoint]) -> Any:
-    """
-    Calculates the average value of a list of measurement points,
-    with the assumption that the "data" property is addable.
-    """
-    return reduce(
-        lambda total, point: total + point.data,
-        points,
-        0) / len(points)
 
 
 class MeasuringState(Enum):
