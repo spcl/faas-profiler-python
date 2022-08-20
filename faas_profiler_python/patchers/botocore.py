@@ -65,8 +65,8 @@ class BotocoreAPI(FunctionPatcher):
 
             operation_name = get_arg_by_key_or_pos(
                 patch_context.args, patch_context.kwargs, pos=0, kw="operation_name")
-            operation_name = str(operation_name).lower()
-            operation = operation_by_operation_name(service, operation_name)
+            operation = operation_by_operation_name(
+                service, str(operation_name).lower())
 
             self.logger.info(
                 f"[OUTBOUND] Detected AWS API call operation {operation}")
@@ -80,6 +80,16 @@ class BotocoreAPI(FunctionPatcher):
                 kw="api_params",
                 default={})
             api_response = patch_context.response if patch_context.response else {}
+
+            meta = getattr(patch_context.instance, "meta", None)
+            http_method, http_uri = self._get_http_info(meta, operation_name)
+
+            outbound_context.set_tags({
+                "parameters": api_parameters,
+                "request_method": http_method,
+                "request_url": getattr(meta, "endpoint_url"),
+                "request_status": api_response.get("ResponseMetadata", {}).get("HTTPStatusCode"),
+                "request_uri": http_uri})
 
             identifiers = get_outbound_identifiers(
                 service, operation, api_parameters=api_parameters, api_response=api_response)
@@ -134,3 +144,21 @@ class BotocoreAPI(FunctionPatcher):
         else:
             self.logger.error(
                 f"[INJECTION] Could not detect service for {patch_context}. Cannot inject.")
+
+    def _get_http_info(
+        self,
+        meta,
+        operation_name: str = None
+    ) -> tuple:
+        if operation_name and meta:
+            try:
+                op_model = meta.service_model.operation_model(operation_name)
+
+                return (
+                    op_model.http.get("method"),
+                    op_model.http.get("requestUri"))
+            except Exception as err:
+                self._logger.error(f"Could not get operation model: {err}")
+                return None, None
+
+        return None, None
