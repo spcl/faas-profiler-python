@@ -2,17 +2,82 @@
 # -*- coding: utf-8 -*-
 """
 Module for memory measurements:
+- LineUsage
 - Usage
 """
 
 import psutil
+import sys
+import linecache
 
-from typing import List
-from time import time
-from dataclasses import asdict
+from memory_profiler import CodeMap
 
-from faas_profiler_python.measurements import PeriodicMeasurement
-from faas_profiler_python.config import MeasuringPoint, average_measuring_points
+from faas_profiler_python.measurements import PeriodicMeasurement, Measurement
+
+
+class LineUsage(Measurement):
+
+    def initialize(
+        self,
+        function,
+        include_children: bool = False,
+        **kwargs
+    ) -> None:
+        self.include_children = include_children
+        self.code_map = CodeMap(
+            include_children=self.include_children, backend="psutil")
+
+        self._original_trace_function = None
+        self.prevlines = []
+        self.prev_lineno = None
+        self.function = function
+
+    def start(self) -> None:
+        self.code_map.add(self.function.__code__)
+
+        self._original_trace_function = sys.gettrace()
+        sys.settrace(self._trace_memory_usage)
+
+    def stop(self) -> None:
+        sys.settrace(self._original_trace_function)
+
+    def _trace_memory_usage(self, frame, event, arg):
+        if frame.f_code in self.code_map:
+            if event == 'call':
+                self.prevlines.append(frame.f_lineno)
+            elif event == 'line':
+                self.code_map.trace(
+                    frame.f_code, self.prevlines[-1], self.prev_lineno)
+                self.prev_lineno = self.prevlines[-1]
+                self.prevlines[-1] = frame.f_lineno
+            elif event == 'return':
+                lineno = self.prevlines.pop()
+                self.code_map.trace(frame.f_code, lineno, self.prev_lineno)
+                self.prev_lineno = lineno
+
+        if self._original_trace_function is not None:
+            self._original_trace_function(frame, event, arg)
+
+        return self._trace_memory_usage
+
+    def results(self) -> dict:
+        line_memory = {}
+        for (filename, lines) in self.code_map.items():
+            all_lines = linecache.getlines(filename)
+            for (line_number, memory) in lines:
+                if not memory:
+                    continue
+
+                line_memory[line_number] = {
+                    "line_content": all_lines[line_number - 1],
+                    "occurrences": memory[2],
+                    "increment": memory[0],
+                    "total_memory": memory[1]
+                }
+
+        return {
+            "line_memory": line_memory
+        }
 
 
 class Usage(PeriodicMeasurement):
@@ -27,41 +92,31 @@ class Usage(PeriodicMeasurement):
         self.include_children = include_children
 
         self._own_process_id = process_pid
-        self._measuring_points: List[MeasuringPoint] = []
-        self._average_usage = 0
-        self._baseline = 0
+        self._function_pid = function_pid
+
+        self._measuring_points = []
 
         try:
-            self.process = psutil.Process(function_pid)
+            self.process = psutil.Process(self._function_pid)
         except psutil.Error as err:
             self._logger.warn(f"Could not set process: {err}")
 
     def start(self) -> None:
-        self._baseline = self._get_memory()
-
-        self._measuring_points.append(MeasuringPoint(
-            timestamp=time(),
-            data=self._baseline))
+        self._measuring_points.append(self._get_memory())
 
     def measure(self):
-        self._append_new_memory_measurement()
+        self._measuring_points.append(self._get_memory())
+
+    def stop(self) -> None:
+        self._measuring_points.append(self._get_memory())
 
     def deinitialize(self) -> None:
-        self._average_usage = average_measuring_points(self._measuring_points)
         del self.process
 
     def results(self) -> dict:
         return {
-            "measuringPoints": list(map(asdict, self._measuring_points)),
-            "averageUsage": self._average_usage
+            "measuring_points": self._measuring_points
         }
-
-    def _append_new_memory_measurement(self):
-        current_memory = self._get_memory()
-        if current_memory is not None:
-            self._measuring_points.append(MeasuringPoint(
-                timestamp=time(),
-                data=current_memory - self._measuring_points[-1].data))
 
     def _get_memory(self):
         try:
