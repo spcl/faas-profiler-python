@@ -13,6 +13,11 @@ import linecache
 from memory_profiler import CodeMap
 
 from faas_profiler_python.measurements import PeriodicMeasurement, Measurement
+from faas_profiler_core.models import (
+    MemoryLineUsage,
+    MemoryLineUsageItem,
+    MemoryUsage
+)
 
 
 class LineUsage(Measurement):
@@ -24,16 +29,19 @@ class LineUsage(Measurement):
         **kwargs
     ) -> None:
         self.include_children = include_children
-        self.code_map = CodeMap(
-            include_children=self.include_children, backend="psutil")
+        self._function = function
 
+        self._code_map = CodeMap(
+            include_children=self.include_children, backend="psutil")
         self._original_trace_function = None
-        self.prevlines = []
-        self.prev_lineno = None
-        self.function = function
+        self._prevlines = []
+        self._prev_lineno = None
+
+        self._result = MemoryLineUsage(
+            line_memories=[])
 
     def start(self) -> None:
-        self.code_map.add(self.function.__code__)
+        self._code_map.add(self._function.__code__)
 
         self._original_trace_function = sys.gettrace()
         sys.settrace(self._trace_memory_usage)
@@ -42,18 +50,18 @@ class LineUsage(Measurement):
         sys.settrace(self._original_trace_function)
 
     def _trace_memory_usage(self, frame, event, arg):
-        if frame.f_code in self.code_map:
+        if frame.f_code in self._code_map:
             if event == 'call':
-                self.prevlines.append(frame.f_lineno)
+                self._prevlines.append(frame.f_lineno)
             elif event == 'line':
-                self.code_map.trace(
-                    frame.f_code, self.prevlines[-1], self.prev_lineno)
-                self.prev_lineno = self.prevlines[-1]
-                self.prevlines[-1] = frame.f_lineno
+                self._code_map.trace(
+                    frame.f_code, self._prevlines[-1], self._prev_lineno)
+                self._prev_lineno = self._prevlines[-1]
+                self._prevlines[-1] = frame.f_lineno
             elif event == 'return':
-                lineno = self.prevlines.pop()
-                self.code_map.trace(frame.f_code, lineno, self.prev_lineno)
-                self.prev_lineno = lineno
+                lineno = self._prevlines.pop()
+                self._code_map.trace(frame.f_code, lineno, self._prev_lineno)
+                self._prev_lineno = lineno
 
         if self._original_trace_function is not None:
             self._original_trace_function(frame, event, arg)
@@ -61,23 +69,22 @@ class LineUsage(Measurement):
         return self._trace_memory_usage
 
     def results(self) -> dict:
-        line_memory = {}
-        for (filename, lines) in self.code_map.items():
+        for (filename, lines) in self._code_map.items():
             all_lines = linecache.getlines(filename)
             for (line_number, memory) in lines:
                 if not memory:
                     continue
 
-                line_memory[line_number] = {
-                    "line_content": all_lines[line_number - 1],
-                    "occurrences": memory[2],
-                    "increment": memory[0],
-                    "total_memory": memory[1]
-                }
+                content = all_lines[line_number - 1]
+                self._result.line_memories.append(
+                    MemoryLineUsageItem(
+                        line_number=line_number,
+                        content=content,
+                        memory_increment=memory[0],
+                        memory_total=memory[1],
+                        occurrences=memory[2]))
 
-        return {
-            "line_memory": line_memory
-        }
+        return self._result.dump()
 
 
 class Usage(PeriodicMeasurement):
@@ -87,6 +94,7 @@ class Usage(PeriodicMeasurement):
         function_pid: int = None,
         process_pid: int = None,
         include_children: bool = False,
+        interval: float = None,
         **kwargs
     ) -> None:
         self.include_children = include_children
@@ -94,7 +102,8 @@ class Usage(PeriodicMeasurement):
         self._own_process_id = process_pid
         self._function_pid = function_pid
 
-        self._measuring_points = []
+        self._result = MemoryUsage(
+            interval=interval, measuring_points=[])
 
         try:
             self.process = psutil.Process(self._function_pid)
@@ -102,21 +111,19 @@ class Usage(PeriodicMeasurement):
             self._logger.warn(f"Could not set process: {err}")
 
     def start(self) -> None:
-        self._measuring_points.append(self._get_memory())
+        self._result.measuring_points.append(self._get_memory())
 
     def measure(self):
-        self._measuring_points.append(self._get_memory())
+        self._result.measuring_points.append(self._get_memory())
 
     def stop(self) -> None:
-        self._measuring_points.append(self._get_memory())
+        self._result.measuring_points.append(self._get_memory())
 
     def deinitialize(self) -> None:
         del self.process
 
     def results(self) -> dict:
-        return {
-            "measuring_points": self._measuring_points
-        }
+        return self._result.dump()
 
     def _get_memory(self):
         try:
