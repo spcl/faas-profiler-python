@@ -187,7 +187,7 @@ class PeriodicProcess(Process):
         result_storage_path: str,
         parent_connection: Type[connection.Connection],
         child_connection: Type[connection.Connection],
-        refresh_interval: float = 0.1
+        refresh_interval: float = 0.001
     ) -> None:
         self.parent_connection = parent_connection
         self.child_connection = child_connection
@@ -212,7 +212,9 @@ class PeriodicProcess(Process):
                 f"Measurement process started (pid={process_pid}).")
 
             self.batch_execution.initialize(
-                process_pid=process_pid, function_pid=self.function_pid)
+                process_pid=process_pid,
+                function_pid=self.function_pid,
+                interval=self.refresh_interval)
             self.batch_execution.start()
             self.child_connection.send(ProcessFeedback(MeasuringState.STARTED))
 

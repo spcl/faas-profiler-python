@@ -6,42 +6,45 @@ Module for AWS invocation capturing.
 
 import io
 from typing import Type
-from faas_profiler_python.aws import AWSServices
 
 from faas_profiler_python.captures import Capture
-from faas_profiler_python.patchers import InvocationContext
+from faas_profiler_python.patchers import OutboundContext
 from faas_profiler_python.patchers.botocore import BotocoreAPI
 from faas_profiler_python.patchers.io import Open
+
+from faas_profiler_core.constants import AWSOperation, AWSService
+from faas_profiler_core.models import S3CaptureItem
 
 
 class S3Capture(Capture):
     requested_patch = BotocoreAPI
 
-    def initialize(self, parameters: dict = {}) -> None:
-        self.invocations = []
-        return super().initialize(parameters)
+    def initialize(self, *args, **kwargs) -> None:
+        super().initialize(*args, **kwargs)
+        self._invocations = []
 
-    def capture(self, invocation_context: Type[InvocationContext]) -> None:
-        if invocation_context.tags.get("service") != AWSServices.S3:
+    def capture(
+        self,
+        outbound_context: Type[OutboundContext]
+    ) -> None:
+        if outbound_context.service != AWSService.S3:
             return
 
-        tags = invocation_context.tags
-        api_params = tags.get("api_params", {})
-
-        self.invocations.append({
-            "operation": tags.get("operation"),
-            "error": invocation_context.has_error,
-            "error_message": str(invocation_context.error),
-            "bucket": api_params.get("Bucket"),
-            "key": api_params.get("Key"),
-            "api_params": {str(k): str(v) for k, v in api_params.items()},
-            "request_url": tags.get("endpoint_url"),
-            "request_uri": tags.get("http_uri"),
-            "request_method": tags.get("http_method"),
-            "request_status": tags.get("http_code"),
-            "size": tags.get("content_length") or self._get_size_by_body(api_params),
-            "execution_time": invocation_context.execution_time
-        })
+        api_params = outbound_context.tags.get("parameters")
+        self._invocations.append(
+            S3CaptureItem(
+                operation=outbound_context.operation,
+                parameters=api_params,
+                bucket_name=outbound_context.identifier.get("bucket_name"),
+                object_key=outbound_context.identifier.get("object_key"),
+                object_size=self._get_size_by_body(api_params),
+                request_method=outbound_context.tags.get("request_method"),
+                request_status=outbound_context.tags.get("request_status"),
+                request_url=outbound_context.tags.get("request_url"),
+                request_uri=outbound_context.tags.get("request_uri"),
+                execution_time=(
+                    outbound_context.finished_at -
+                    outbound_context.invoked_at).total_seconds()))
 
     def _get_size_by_body(self, api_params):
         if not api_params:
@@ -52,7 +55,8 @@ class S3Capture(Capture):
             return body.getbuffer().nbytes
 
     def results(self) -> list:
-        return self.invocations
+        return [
+            inc.dump() for inc in self._invocations]
 
 
 class EFSCapture(Capture):
@@ -67,7 +71,7 @@ class EFSCapture(Capture):
                 "Cannot initialise EFSCapture without mounting points")
         return super().initialize(parameters)
 
-    def capture(self, invocation_context: Type[InvocationContext]) -> None:
+    def capture(self, invocation_context: Type[OutboundContext]) -> None:
         for monting_point in self.mounting_points:
             file = invocation_context.tags.get("file")
             if file and file.startswith(monting_point):

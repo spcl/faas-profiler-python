@@ -4,6 +4,7 @@
 TODO:
 """
 
+from ast import Call
 from datetime import datetime
 import os
 from typing import Type, Callable, Any
@@ -82,6 +83,9 @@ class Profiler(Loggable):
         self.periodic_process: Type[PeriodicProcess] = None
 
         self.function_pid = os.getpid()
+        self.function: Callable = None
+        self.function_args: tuple = None
+        self.function_kwargs: dict = None
 
         self.periodic_results_path = os.path.join(
             self.config.tmp_result_storage,
@@ -99,7 +103,11 @@ class Profiler(Loggable):
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        self.start(args, kwargs)
+        self.function = func
+        self.function_args = args
+        self.function_kwargs = kwargs
+
+        self.start()
 
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
         response, error, executed_at, finished_at = invoke_instrumented_function(
@@ -117,17 +125,14 @@ class Profiler(Loggable):
         else:
             return response
 
-    def start(
-        self,
-        function_args: tuple = tuple(),
-        functon_kwargs: dict = {}
-    ) -> None:
+    def start(self) -> None:
         """
         Starts the profiling.
         """
         self.logger.info("[PROFILER] Profiler run started.")
 
-        self.tracer.handle_inbound_request(function_args, functon_kwargs)
+        self.tracer.handle_inbound_request(
+            self.function_args, self.function_kwargs)
         self.tracer.start_tracing_outbound_requests()
 
         self._start_capturing()
@@ -167,7 +172,8 @@ class Profiler(Loggable):
             inbound_context=self.tracer.inbound_context,
             outbound_contexts=self.tracer.outbound_contexts,
             periodic_results_file=self.periodic_results_path,
-            default_batch=self.default_batch)
+            default_batch=self.default_batch,
+            capture_batch=self.capture_batch)
 
         for exporter_plugin in self.exporters:
             try:
@@ -189,7 +195,8 @@ class Profiler(Loggable):
         self.logger.info(
             "[DEFAULT MEASUREMENTS]: Initializing and starting.")
 
-        self.default_batch.initialize(function_pid=self.function_pid)
+        self.default_batch.initialize(
+            function_pid=self.function_pid, function=self.function)
         self.default_batch.start()
         self._default_measurements_started = True
 

@@ -65,13 +65,15 @@ class ResultCollector(Loggable):
         inbound_context: Type[InboundContext],
         outbound_contexts: List[Type[OutboundContext]],
         periodic_results_file: str,
-        default_batch: Type[BatchExecution]
+        default_batch: Type[BatchExecution],
+        capture_batch: Type[BatchExecution]
     ) -> None:
         periodic_results = self._read_periodic_results_file(
             periodic_results_file)
         default_results = default_batch.export_results()
+        capture_results = capture_batch.export_results()
 
-        self.results = periodic_results + default_results
+        self.results = periodic_results + default_results + capture_results
         self.record = TraceRecord(
             function_context=function_context,
             tracing_context=tracing_context,

@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import inspect
 
-from typing import Type
+from typing import Type, Any
 
 from faas_profiler_python.core import BasePlugin
-from faas_profiler_python.patchers import FunctionPatcher, InvocationContext, request_patcher
+from faas_profiler_python.patchers import FunctionPatcher, OutboundContext, request_patcher
 from faas_profiler_python.utilis import Loggable
 
 
@@ -32,16 +32,16 @@ class Capture(BasePlugin, Loggable):
 
         return BasePlugin.__new__(cls)
 
-    def initialize(self, parameters: dict = {}) -> None:
+    def initialize(self, *args, **kwargs) -> None:
         self.patcher = request_patcher(self.requested_patch)
-        self.patcher.register_capture(self)
+        self.patcher.register_observer(self.capture)
 
     def start(self) -> None:
         self.patcher.activate()
 
     def capture(
         self,
-        invocation_context: Type[InvocationContext],
+        outbound_context: Type[OutboundContext],
     ) -> None:
         pass
 
@@ -51,5 +51,5 @@ class Capture(BasePlugin, Loggable):
     def deinitialize(self) -> None:
         del self.patcher
 
-    def results(self) -> list:
-        return []
+    def results(self) -> Any:
+        return None
