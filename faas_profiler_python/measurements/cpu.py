@@ -6,10 +6,8 @@ Module for cpu measurements
 
 import psutil
 
-from typing import List
-
 from faas_profiler_python.measurements import PeriodicMeasurement
-from faas_profiler_python.config import MeasuringPoint
+from faas_profiler_core.models import CPUUsage
 
 
 class Usage(PeriodicMeasurement):
@@ -19,12 +17,14 @@ class Usage(PeriodicMeasurement):
         include_children: bool = False,
         process_pid: int = None,
         function_pid: int = None,
+        interval: int = None,
         **kwargs
     ) -> None:
         self._include_children = include_children
         self._own_process_id = process_pid
-        self._measuring_points: List[MeasuringPoint] = []
-        self._average_usage = 0
+
+        self._result = CPUUsage(
+            interval=interval, measuring_points=[])
 
         try:
             self.process = psutil.Process(function_pid)
@@ -32,21 +32,19 @@ class Usage(PeriodicMeasurement):
             self.logger.warn(f"Could not set process: {err}")
 
     def start(self) -> None:
-        self._measuring_points.append(self._get_cpu_percentage())
+        self._result.measuring_points.append(self._get_cpu_percentage())
 
     def measure(self):
-        self._measuring_points.append(self._get_cpu_percentage())
+        self._result.measuring_points.append(self._get_cpu_percentage())
 
     def stop(self) -> None:
-        self._measuring_points.append(self._get_cpu_percentage())
+        self._result.measuring_points.append(self._get_cpu_percentage())
 
     def deinitialize(self) -> None:
         del self.process
 
     def results(self) -> dict:
-        return {
-            "measuring_points": self._measuring_points
-        }
+        return self._result.dump()
 
     def _get_cpu_percentage(self):
         try:
