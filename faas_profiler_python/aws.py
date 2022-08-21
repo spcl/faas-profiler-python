@@ -152,6 +152,8 @@ class AWSEvent(Loggable):
 
         if self.service == AWSService.S3:
             self._add_s3_trigger_context(trigger_ctx)
+        elif self.service == AWSService.DYNAMO_DB:
+            self._add_dynamodb_context(trigger_ctx)
 
         return trigger_ctx
 
@@ -234,6 +236,33 @@ class AWSEvent(Loggable):
             "request_id": _s3_record.get("responseelements", {}).get("x-amz-request-id"),
             "object_key": _object.get("key"),
             "bucket_name": _bucket.get("name")
+        })
+
+    def _add_dynamodb_context(
+        self,
+        trigger_context: Type[InboundContext]
+    ) -> None:
+        """
+        Add DynamoDB trigger information
+        """
+        trigger_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+        _db_record = self._get_first_record()
+        _dynamodb_arn = _db_record.get("eventsourcearn")
+        _table_name = None
+        if _dynamodb_arn:
+            _dynamodb_arn = parse_aws_arn(_dynamodb_arn)
+            if _dynamodb_arn.resource_type == "table":
+                _table_name = str(_dynamodb_arn.resource).split("/")[0]
+
+        _items = []
+        for record in self.data.get("records", []):
+            _item = record.get("dynamodb", {}).get("NewImage")
+            if _item:
+                _items.append(_item)
+
+        trigger_context.set_identifiers({
+            "table_name": _table_name,
+            "items": _items
         })
 
     # Helpers
@@ -380,7 +409,8 @@ AWS Service detection
 
 SERVICE_BY_ENDPOINT = {
     "lambda": AWSService.LAMBDA,
-    "s3": AWSService.S3
+    "s3": AWSService.S3,
+    "dynamodb": AWSService.DYNAMO_DB
 }
 
 
@@ -401,6 +431,11 @@ OPERATION_BY_NAME = {
     },
     AWSService.S3: {
         "putobject": AWSOperation.S3_OBJECT_CREATE
+    },
+    AWSService.DYNAMO_DB: {
+        "putitem": AWSOperation.DYNAMO_DB_UPDATE,
+        "removeitem": AWSOperation.DYNAMO_DB_UPDATE,
+        "updateitem": AWSOperation.DYNAMO_DB_UPDATE
     }
 }
 
@@ -439,13 +474,18 @@ def get_outbound_identifiers(
     api_response = lowercase_keys(api_response)
 
     request_id = api_response.get("responsemetadata", {}).get("RequestId")
-    if request_id:
-        identifiers["request_id"] = request_id
 
+    service_identifiers_function = None
     if service == AWSService.S3:
+        if request_id:
+            identifiers["request_id"] = request_id
         service_identifiers_function = get_outbound_s3_identifiers
     elif service == AWSService.LAMBDA:
+        if request_id:
+            identifiers["request_id"] = request_id
         service_identifiers_function = get_outbound_lambda_identifiers
+    elif service == AWSService.DYNAMO_DB:
+        service_identifiers_function = get_dynamodb_identifiers
 
     if service_identifiers_function:
         identifiers.update(service_identifiers_function(
@@ -487,6 +527,27 @@ def get_outbound_lambda_identifiers(
         return {"function_name": _function_name}
 
     return {}
+
+
+def get_dynamodb_identifiers(
+    operation: AWSOperation,
+    api_parameters: dict,
+    api_response: dict
+) -> dict:
+    """
+    Extracts outbound DynamoDB identifiers
+    """
+    identifiers = {}
+
+    _table_name = api_parameters.get("tablename")
+    _item = api_parameters.get("item")
+    if _table_name:
+        identifiers["table_name"] = _table_name
+
+    if _item:
+        identifiers["item"] = _item
+
+    return identifiers
 
 
 """

@@ -91,7 +91,6 @@ class BotocoreAPI(FunctionPatcher):
                 "request_url": getattr(meta, "endpoint_url"),
                 "request_status": api_response.get("ResponseMetadata", {}).get("HTTPStatusCode"),
                 "request_uri": http_uri})
-
             identifiers = get_outbound_identifiers(
                 service, operation, api_parameters=api_parameters, api_response=api_response)
             self.logger.info(
