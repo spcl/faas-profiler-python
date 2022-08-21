@@ -141,6 +141,7 @@ class BotocoreAPI(FunctionPatcher):
             except InjectionError as err:
                 self.logger.warn(f"[INJECTION] Injection failed: {err}")
             else:
+                print(api_parameters)
                 self.logger.info("[INJECTION] Payload injected.")
         else:
             self.logger.error(

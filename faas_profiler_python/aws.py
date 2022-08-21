@@ -3,6 +3,7 @@
 """
 Module for all AWS specific logic.
 """
+import json
 
 from collections import namedtuple
 from datetime import datetime
@@ -155,12 +156,32 @@ class AWSEvent(Loggable):
         return trigger_ctx
 
     def extract_trace_context(self) -> Type[TracingContext]:
+        """
+        Extracts trace context from event data
+        """
+        trace_context = self._payload_tracing_context()
+        if trace_context:
+            return trace_context
+
         # if "headers" in self.data:
         #     return self._http_tracing_context()
         # if self.service == EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
         #     return self._scheduled_event_context()
 
         # Default case: Return empty trace context
+        return None
+
+    def _payload_tracing_context(self) -> Type[TracingContext]:
+        """
+        Extracts tracing context from payload
+        """
+        if TRACE_CONTEXT_KEY in self.data:
+            trace_ctx = self.data[TRACE_CONTEXT_KEY]
+            return TracingContext(
+                trace_id=trace_ctx.get(TRACE_ID_HEADER),
+                record_id=trace_ctx.get(RECORD_ID_HEADER),
+                parent_id=trace_ctx.get(PARENT_ID_HEADER))
+
         return None
 
     def _http_tracing_context(self) -> Type[TracingContext]:
@@ -496,12 +517,22 @@ def inject_lambda_call(
             raise InjectionError(
                 f"Could not decode client context from base64 to json: {err}")
 
+    payload = {}
+    if "Payload" in api_parameters:
+        try:
+            payload = json.loads(api_parameters["Payload"].decode('utf-8'))
+        except json.JSONDecodeError as err:
+            raise InjectionError(
+                f"Could not decode payload to json: {err}")
+
     # Injection
     client_context.setdefault("custom", {}).update(injection_data)
+    payload[TRACE_CONTEXT_KEY] = injection_data
 
     try:
         api_parameters["ClientContext"] = encode_dict_to_base64_json(
             client_context)
+        api_parameters["Payload"] = json.dumps(payload).encode('utf-8')
     except ValueError as err:
         raise InjectionError(
             f"Could not encode client context from json to base64: {err}")
