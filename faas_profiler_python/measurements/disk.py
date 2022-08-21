@@ -4,13 +4,12 @@
 Module for network measurements:
 - DiskIOCounters
 """
-
-
 import psutil
 
 from typing import Type
 
 from faas_profiler_python.measurements import Measurement
+from faas_profiler_core.models import DiskIOCounters
 
 
 class IOCounters(Measurement):
@@ -20,38 +19,33 @@ class IOCounters(Measurement):
         function_pid: int = None,
         **kwargs
     ) -> None:
-        self.start_snapshot: Type[psutil._common.pio] = None
-        self.end_snapshot: Type[psutil._common.pio] = None
+        self._start_io: Type[psutil._common.pio] = None
+        self._end_io: Type[psutil._common.pio] = None
 
-        self._io_delta = {}
+        self._io_counter = DiskIOCounters(0, 0, 0, 0)
 
         try:
             self.process = psutil.Process(function_pid)
-        except psutil.AccessDenied:
+        except psutil.AccessDenied as err:
+            self._logger.warn(f"Could not set process: {err}")
             self.process = None
 
     def start(self) -> None:
         if self.process:
-            self.start_snapshot = self.process.io_counters()
+            self._start_io = self.process.io_counters()
 
     def stop(self) -> None:
         if self.process:
-            self.end_snapshot = self.process.io_counters()
+            self._end_io = self.process.io_counters()
 
-    def tearDown(self) -> None:
-        if self.start_snapshot and self.end_snapshot:
-            self._io_delta = {
-                "read_count": self.end_snapshot.read_count -
-                self.start_snapshot.read_count,
-                "write_count": self.end_snapshot.write_count -
-                self.start_snapshot.write_count,
-                "read_bytes": self.end_snapshot.read_bytes -
-                self.start_snapshot.read_bytes,
-                "write_bytes": self.end_snapshot.write_bytes -
-                self.start_snapshot.write_bytes,
-            }
-
+    def deinitialize(self) -> None:
         del self.process
 
     def results(self) -> dict:
-        return self._io_delta
+        if self._start_io and self._end_io:
+            self._io_counter.read_count = self._end_io.read_count - self._start_io.read_count
+            self._io_counter.write_count = self._end_io.write_count - self._start_io.write_count
+            self._io_counter.read_bytes = self._end_io.read_bytes - self._start_io.read_bytes
+            self._io_counter.write_bytes = self._end_io.write_bytes - self._start_io.write_bytes
+
+        return self._io_counter.dump()
