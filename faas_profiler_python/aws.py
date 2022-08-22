@@ -90,11 +90,7 @@ class AWSEvent(Loggable):
         Resolves the service and operation triggering this event.
         """
         service = AWSService.UNIDENTIFIED
-        operation = AWSOperation.UNIDENTIFIED
-
-        # EventTypes.CLOUDWATCH_LOGS: self._is_cloudwatch_logs,
-        # EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
-        # self._is_cloudwatch_scheduled_event,
+        operation = AWSService.UNIDENTIFIED
 
         if self._is_lambda_function_url():
             service = AWSService.LAMBDA
@@ -154,6 +150,8 @@ class AWSEvent(Loggable):
             self._add_s3_trigger_context(trigger_ctx)
         elif self.service == AWSService.DYNAMO_DB:
             self._add_dynamodb_context(trigger_ctx)
+        elif self.service == AWSService.LAMBDA:
+            self._add_lambda_context()
 
         return trigger_ctx
 
@@ -401,6 +399,20 @@ class AWSContext(Loggable):
             trace_id=self.custom_context.get(TRACE_ID_HEADER),
             record_id=self.custom_context.get(RECORD_ID_HEADER),
             parent_id=self.custom_context.get(PARENT_ID_HEADER))
+
+    def extract_inbound_context(self) -> Type[InboundContext]:
+        """
+        Extracts default Lambda inbound context
+        """
+        _function_name = getattr(self.data, "function_name", "unidentified")
+
+        return InboundContext(
+            provider=Provider.AWS,
+            service=AWSService.LAMBDA,
+            operation=AWSOperation.LAMBDA_INVOKE,
+            invoked_at=datetime.now()
+            identifier={"function_name": _function_name}
+        )
 
 
 """

@@ -11,7 +11,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Type
 
-from faas_profiler_core.constants import Provider
+from faas_profiler_core.constants import Provider, AWSOperation, AWSService
 from faas_profiler_core.models import TracingContext, InboundContext
 
 from faas_profiler_python.aws import AWSContext, AWSEvent
@@ -108,4 +108,9 @@ class AWSPayload(Payload):
         """
         Returns context about the trigger extracted from the AWS event.
         """
-        return self.event.extract_inbound_context()
+        event_inbound_context = self.event.extract_inbound_context()
+        if (event_inbound_context.service != AWSService.UNIDENTIFIED and
+                event_inbound_context.operation != AWSOperation.UNIDENTIFIED):
+            return event_inbound_context
+
+        return self.context.extract_inbound_context()
