@@ -410,9 +410,8 @@ class AWSContext(Loggable):
             provider=Provider.AWS,
             service=AWSService.LAMBDA,
             operation=AWSOperation.LAMBDA_INVOKE,
-            invoked_at=datetime.now()
-            identifier={"function_name": _function_name}
-        )
+            invoked_at=datetime.now(),
+            identifier={"function_name": _function_name})
 
 
 """
