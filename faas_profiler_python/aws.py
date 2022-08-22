@@ -405,13 +405,15 @@ class AWSContext(Loggable):
         Extracts default Lambda inbound context
         """
         _function_name = getattr(self.data, "function_name", "unidentified")
-
+        _request_id = getattr(self.data, "aws_request_id", "unidentified")
         return InboundContext(
             provider=Provider.AWS,
             service=AWSService.LAMBDA,
             operation=AWSOperation.LAMBDA_INVOKE,
             invoked_at=datetime.now(),
-            identifier={"function_name": _function_name})
+            identifier={
+                "function_name": _function_name,
+                "request_id": _request_id})
 
 
 """
