@@ -25,14 +25,31 @@ def create_aws_lambda_function_context() -> Type[FunctionContext]:
         handler=_handler)
 
 
+def create_gcp_function_context() -> Type[FunctionContext]:
+    """
+    Creates function context for GCP Function
+    """
+    _function_name = os.environ.get("K_SERVICE", "unidentified")
+    _handler = os.environ.get("FUNCTION_TARGET", "unidentified")
+
+    return FunctionContext(
+        provider=Provider.GCP,
+        runtime=Runtime.PYTHON,
+        function_name=_function_name,
+        handler=_handler)
+
+
 def resolve_function_context() -> Type[FunctionContext]:
     """
     Returns a function context based on the provider
     """
-    # Resolve Provider
-    # TODO: Make this dynamic
-    provider = Provider.AWS
-
-    # Factory based on provider
-    if provider == Provider.AWS:
+    if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None:
         return create_aws_lambda_function_context()
+    elif os.environ.get("K_SERVICE") is not None:
+        return create_gcp_function_context()
+    else:
+        return FunctionContext(
+            provider=Provider.UNIDENTIFIED,
+            runtime=Runtime.PYTHON,
+            function_name="unidentified",
+            handler="unidentified")
