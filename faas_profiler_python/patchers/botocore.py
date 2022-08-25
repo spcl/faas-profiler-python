@@ -100,9 +100,11 @@ class BotocoreAPI(FunctionPatcher):
             outbound_context.set_identifiers(identifiers)
 
             if service == AWSService.LAMBDA and operation == AWSOperation.LAMBDA_INVOKE:
-                if api_parameters.get("InvocationType", "RequestResponse") == "RequestResponse":
+                if api_parameters.get(
+                    "InvocationType",
+                        "RequestResponse") == "RequestResponse":
                     outbound_context.trigger_synchronicity = TriggerSynchronicity.SYNC
-            
+
         else:
             self.logger.error(
                 f"[OUTBOUND] Could not detect service for {patch_context}.")

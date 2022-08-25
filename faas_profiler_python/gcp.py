@@ -10,7 +10,6 @@ from typing import Type
 
 from faas_profiler_core.models import InboundContext, TracingContext
 from faas_profiler_core.constants import (
-    Provider,
     TRACE_ID_HEADER,
     RECORD_ID_HEADER,
     PARENT_ID_HEADER,

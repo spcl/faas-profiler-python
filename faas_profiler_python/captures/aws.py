@@ -12,7 +12,7 @@ from faas_profiler_python.patchers import OutboundContext
 from faas_profiler_python.patchers.botocore import BotocoreAPI
 from faas_profiler_python.patchers.io import Open
 
-from faas_profiler_core.constants import AWSOperation, AWSService
+from faas_profiler_core.constants import AWSService
 from faas_profiler_core.models import S3CaptureItem
 
 
