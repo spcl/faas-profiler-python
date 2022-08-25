@@ -8,6 +8,8 @@ import boto3
 
 from typing import Type
 
+from faas_profiler_core.storage import S3RecordStorage, GCPRecordStorage
+
 from faas_profiler_python.exporters import Exporter, ResultCollector, json_formatter
 
 
@@ -17,6 +19,9 @@ class Console(Exporter):
     """
 
     def export(self, results_collector: Type[ResultCollector]):
+        """
+        Prints raw data to std out.
+        """
         print(results_collector.raw_data)
 
 
@@ -46,32 +51,45 @@ class Visualizer(Exporter):
             Payload=results_collector.format(formatter=json_formatter))
 
 
-class VisualizerUploader(Exporter):
+class AWSVisualizerUploader(Exporter):
     """
-    Uploads record to visualizer bucket.
+    Uploads record to visualizer bucket in S3.
     """
 
-    BUCKET_FOLDER = "unprocessed_records"
-
-    def __init__(self, bucket_name: str) -> None:
-        super().__init__()
-
-        self.bucket_name = bucket_name
-
-        if self.bucket_name is None:
-            raise ValueError(
-                "Cannot initialize VisualizerUploader without bucket name")
-
-        self.client = boto3.client('s3')
+    def __init__(
+        self,
+        bucket_name: str,
+        region_name: str
+    ) -> None:
+        self.record_storage = S3RecordStorage(
+            bucket_name=bucket_name,
+            region_name=region_name)
 
     def export(self, results_collector: Type[ResultCollector]):
         """
         Uploads record as json to bucket.
         """
-        _key_name = f"{self.BUCKET_FOLDER}/{results_collector.record_id}.json"
-        body = results_collector.format(formatter=json_formatter)
+        self.record_storage.store_unprocessed_record(results_collector.record)
 
-        self.client.put_object(
-            Bucket=self.bucket_name,
-            Key=_key_name,
-            Body=body)
+
+class GCPVisualizerUploader(Exporter):
+    """
+    Uploads record to visualizer bucket in Google Cloud Storage.
+    """
+
+    def __init__(
+        self,
+        project: str,
+        bucket_name: str,
+        region_name: str
+    ) -> None:
+        self.record_storage = GCPRecordStorage(
+            project=project,
+            bucket_name=bucket_name,
+            region_name=region_name)
+
+    def export(self, results_collector: Type[ResultCollector]):
+        """
+        Uploads record as json to bucket.
+        """
+        self.record_storage.store_unprocessed_record(results_collector.record)

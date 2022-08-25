@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import os
-from uuid import UUID, uuid4
+from uuid import UUID
+import uuid
 import yaml
 
 from typing import List, Type, Any
@@ -73,6 +74,9 @@ class ResultCollector(Loggable):
         default_results = default_batch.export_results()
         capture_results = capture_batch.export_results()
 
+        if tracing_context is None:
+            tracing_context = TracingContext(record_id=uuid(), trace_id=uuid())
+
         self.results = periodic_results + default_results + capture_results
         self.record = TraceRecord(
             function_context=function_context,
@@ -82,10 +86,9 @@ class ResultCollector(Loggable):
             data=[RecordData.load(r) for r in self.results])
         self._raw_data = self.record.dump()
 
-        if tracing_context:
-            self._record_id = tracing_context.record_id
-        else:
-            self._record_id = uuid4()
+        self._record_id = tracing_context.record_id
+
+        assert self._record_id is not None
 
     @property
     def raw_data(self) -> dict:
