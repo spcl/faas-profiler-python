@@ -34,7 +34,7 @@ class InjectionError(RuntimeError):
 Payload
 """
 
-FunctionPayload = namedtuple("FunctionPayload", "args kwargs")
+Function = namedtuple("FunctionPayload", "function args kwargs")
 
 """
 Plugins Config
@@ -67,7 +67,6 @@ class Config:
     MEASUREMENTS_KEY = "measurements"
     CAPTURES_KEY = "captures"
     EXPORTERS_KEY = "exporters"
-    TRACING_KEY = "tracing"
 
     OUTBOUND_REQUESTS_TABLES_KEY = "outbound_requests_tables"
 
@@ -109,18 +108,8 @@ class Config:
         self._exporters: List[UnresolvedPlugin] = self._parse_to_plugins(
             self.EXPORTERS_KEY)
 
-        self._tracing = lowercase_keys(self.config.get(self.TRACING_KEY, {}))
-
         self._outbound_requests_tables = self._parse_outbound_requests_tables(
             self.OUTBOUND_REQUESTS_TABLES_KEY)
-
-    @property
-    def tracing_enabled(self) -> bool:
-        """
-        Returns True if tracing is enabled by user.
-        Default: False
-        """
-        return self._tracing.get("enabled", True)
 
     @property
     def outbound_requests_tables(self) -> Dict[Provider, dict]:
