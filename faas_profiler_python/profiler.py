@@ -4,7 +4,6 @@
 TODO:
 """
 
-from ast import Call
 from datetime import datetime
 import os
 from typing import Type, Callable, Any
@@ -12,7 +11,7 @@ from multiprocessing import Pipe, connection
 from functools import wraps
 from uuid import uuid4
 
-from faas_profiler_python.config import Config, MeasuringState
+from faas_profiler_python.config import Config, MeasuringState, Function
 from faas_profiler_python.function import resolve_function_context
 from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
 from faas_profiler_python.tracer import DistributedTracer
@@ -35,10 +34,10 @@ def profile(config_file: str = None):
 
     def function_profiler(func):
         @wraps(func)
-        def profiler_wrapper(event, context, **kwargs):
+        def profiler_wrapper(*args, **kwargs):
             profiler = Profiler(config_file=config_file)
 
-            function_return = profiler(func, event, context, **kwargs)
+            function_return = profiler(func, *args, **kwargs)
 
             return function_return
         return profiler_wrapper
@@ -83,9 +82,7 @@ class Profiler(Loggable):
         self.periodic_process: Type[PeriodicProcess] = None
 
         self.function_pid = os.getpid()
-        self.function: Callable = None
-        self.function_args: tuple = None
-        self.function_kwargs: dict = None
+        self.function: Type[Function] = None
 
         self.periodic_results_path = os.path.join(
             self.config.tmp_result_storage,
@@ -103,9 +100,7 @@ class Profiler(Loggable):
         Convenience wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
-        self.function = func
-        self.function_args = args
-        self.function_kwargs = kwargs
+        self.function = Function(func, args, kwargs)
 
         self.start()
 
@@ -131,8 +126,7 @@ class Profiler(Loggable):
         """
         self.logger.info("[PROFILER] Profiler run started.")
 
-        self.tracer.handle_inbound_request(
-            self.function_args, self.function_kwargs)
+        self.tracer.handle_inbound_request(self.function)
         self.tracer.start_tracing_outbound_requests()
 
         self._start_capturing()
@@ -196,7 +190,7 @@ class Profiler(Loggable):
             "[DEFAULT MEASUREMENTS]: Initializing and starting.")
 
         self.default_batch.initialize(
-            function_pid=self.function_pid, function=self.function)
+            function_pid=self.function_pid, function=self.function.function)
         self.default_batch.start()
         self._default_measurements_started = True
 

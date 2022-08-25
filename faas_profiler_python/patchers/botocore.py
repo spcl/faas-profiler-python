@@ -7,7 +7,7 @@ Patcher for AWS botocore.
 from __future__ import annotations
 from typing import Type
 
-from faas_profiler_core.constants import AWSService, AWSOperation, Provider
+from faas_profiler_core.constants import AWSService, AWSOperation, Provider, TriggerSynchronicity
 from faas_profiler_core.models import OutboundContext, TracingContext
 from faas_profiler_python.config import InjectionError, UnsupportedServiceError
 
@@ -57,7 +57,8 @@ class BotocoreAPI(FunctionPatcher):
         service = service_by_outbound_endpoint(endpoint_prefix)
 
         outbound_context = OutboundContext(
-            Provider.AWS, service, AWSOperation.UNIDENTIFIED)
+            Provider.AWS, service, AWSOperation.UNIDENTIFIED,
+            trigger_synchronicity=TriggerSynchronicity.ASYNC)
 
         if service != AWSService.UNIDENTIFIED:
             self.logger.info(
@@ -97,6 +98,11 @@ class BotocoreAPI(FunctionPatcher):
                 f"[OUTBOUND] Extracted identifiers for AWS API call: {identifiers}")
 
             outbound_context.set_identifiers(identifiers)
+
+            if service == AWSService.LAMBDA and operation == AWSOperation.LAMBDA_INVOKE:
+                if api_parameters.get("InvocationType", "RequestResponse") == "RequestResponse":
+                    outbound_context.trigger_synchronicity = TriggerSynchronicity.SYNC
+            
         else:
             self.logger.error(
                 f"[OUTBOUND] Could not detect service for {patch_context}.")

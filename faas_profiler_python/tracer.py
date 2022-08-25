@@ -8,15 +8,13 @@ from __future__ import annotations
 from typing import List, Type
 from uuid import uuid4
 
-from faas_profiler_core.requests import RequestTable, NoopRequestTable, RecordType, make_identifier_string
 from faas_profiler_core.constants import Provider
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
 
-from faas_profiler_python.config import Config
+from faas_profiler_python.config import Config, Function
 from faas_profiler_python.patchers import (
     FunctionPatcher,
-    request_patcher,
-    ignore_instance_from_patching
+    request_patcher
 )
 from faas_profiler_python.patchers.botocore import BotocoreAPI
 from faas_profiler_python.payload import Payload
@@ -50,8 +48,6 @@ class DistributedTracer(Loggable):
         self._inbound_context: Type[InboundContext] = None
         self._outbound_contexts: List[Type[OutboundContext]] = []
         self._tracing_context: Type[TracingContext] = None
-
-        self._request_table = self._initialize_request_table()
 
         self._active_outbound_patchers: List[Type[FunctionPatcher]] = []
 
@@ -111,21 +107,17 @@ class DistributedTracer(Loggable):
 
     def handle_inbound_request(
         self,
-        function_args: tuple = tuple(),
-        function_kwargs: dict = {}
+        function: Type[Function]
     ) -> None:
         """
         Handles the incoming request, which is the current call of the serverless function.
 
         Parameters
         ----------
-        function_args: tuple
-            decorated function arguments
-        function_kwargs: tuple
-            decorated function keyword arguments
+        function: namedtuple Function
+            decorated function arguments and keyword arguments
         """
-        self.payload = Payload.resolve(
-            self.provider, (function_args, function_kwargs))
+        self.payload = Payload.resolve(self.provider, function)
         self._inbound_context = self.payload.extract_inbound_context()
         self._tracing_context = self._inferre_tracing_context(
             parent_context=self.payload.extract_tracing_context())
@@ -144,15 +136,13 @@ class DistributedTracer(Loggable):
         outbound_context: OutboundContext
             Context of the outbound request.
         """
-        identifier_string = make_identifier_string(RecordType.OUTBOUND, outbound_context.identifier)
+        identifier_string = outbound_context.identifier_string
         if identifier_string in self._recorded_identifier:
             self.logger.info(
                 f"Skip recording {identifier_string}. Already recorded.")
             return
 
-        # self._request_table.record_outbound_request(outbound_context, self.tracing_context)
         self._outbound_contexts.append(outbound_context)
-
         self._recorded_identifier.add(identifier_string)
 
     """
@@ -169,7 +159,7 @@ class DistributedTracer(Loggable):
         if not parent_context:
             self.logger.info(
                 "Parent tracing context is empty. Create new one.")
-            return TracingContext(trace_id=uuid4(), record_id=uuid4)
+            return TracingContext(trace_id=uuid4(), record_id=uuid4())
 
         if parent_context.trace_id:
             trace_id = parent_context.trace_id
@@ -185,22 +175,3 @@ class DistributedTracer(Loggable):
             trace_id=trace_id,
             record_id=uuid4(),
             parent_id=parent_id)
-
-    def _initialize_request_table(self):
-        """
-        Initializes a new Request Table based on the provider
-        """
-        try:
-            request_table_cls = RequestTable.factory(self.provider)
-            request_table = request_table_cls(
-                **self.config.outbound_requests_tables.get(self.provider, {}))
-            self.logger.info(
-                f"Initialized new Outbound Request Table {request_table_cls.__name__} for {self.provider}")
-
-            # TODO: AWS specific
-            ignore_instance_from_patching(request_table.dynamodb)
-            return request_table
-        except Exception as err:
-            self.logger.error(
-                f"Could not initialize Outbound Request Table for {self.provider}: {err}")
-            return NoopRequestTable()
