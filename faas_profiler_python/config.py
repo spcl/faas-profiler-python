@@ -31,14 +31,25 @@ class InjectionError(RuntimeError):
 
 
 """
+Payload
+"""
+
+FunctionPayload = namedtuple("FunctionPayload", "args kwargs")
+
+"""
 Plugins Config
 """
+
 UnresolvedPlugin = namedtuple(
     'UnresolvedPlugin',
     'name parameters external_path')
 LoadedPlugin = namedtuple(
     "LoadedPlugin",
     "name cls parameters")
+
+"""
+Configuration
+"""
 
 
 class ConfigSyntaxError(SyntaxError):
@@ -185,6 +196,11 @@ class Config:
                 tables[provider] = table_config.get("parameters", {})
 
         return tables
+
+
+"""
+Process Data structures and feedback
+"""
 
 
 class MeasuringState(Enum):
