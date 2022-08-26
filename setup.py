@@ -14,5 +14,5 @@ setuptools.setup(
     version='0.1.0',
     url='https://github.com/spcl/faas-profiler-python',
     packages=setuptools.find_packages(),
-    include_package_data=True)
-    # install_requires=requirements)
+    include_package_data=True,
+    install_requires=requirements)
