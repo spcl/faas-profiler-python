@@ -132,11 +132,7 @@ class GCPPayload(Payload):
     Representation of an incoming GCP Function payload consisting of context and event data.
     """
 
-    def __init__(
-        self,
-        args: tuple,
-        kwargs: dict
-    ) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         """
         Constructor for GCP Payload
         """
