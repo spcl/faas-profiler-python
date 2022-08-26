@@ -67,6 +67,7 @@ class Config:
     MEASUREMENTS_KEY = "measurements"
     CAPTURES_KEY = "captures"
     EXPORTERS_KEY = "exporters"
+    TRACING_KEY = "tracing"
 
     OUTBOUND_REQUESTS_TABLES_KEY = "outbound_requests_tables"
 
@@ -107,6 +108,8 @@ class Config:
             self.CAPTURES_KEY)
         self._exporters: List[UnresolvedPlugin] = self._parse_to_plugins(
             self.EXPORTERS_KEY)
+
+        self._tracing = lowercase_keys(self.config.get(self.TRACING_KEY, {}))
 
         self._outbound_requests_tables = self._parse_outbound_requests_tables(
             self.OUTBOUND_REQUESTS_TABLES_KEY)
