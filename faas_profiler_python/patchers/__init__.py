@@ -289,6 +289,7 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         Safely executes the extract context hook
         """
+        # breakpoint()
         try:
             return self.extract_outbound_context(patch_context)
         except Exception as err:
@@ -301,21 +302,24 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         Calls the tracer to modify the payload if required.
         """
-        if self._tracing_context:
-            org_args = deepcopy(patch_context.args)
-            org_kwargs = deepcopy(patch_context.kwargs)
-            try:
-                self.inject_tracing_context(
-                    patch_context, self._tracing_context)
-            except Exception as err:
-                self._logger.error(
-                    f"Injection failed: {err}. Take unmodified parameters.")
-                patch_context.args = org_args
-                patch_context.kwargs = org_kwargs
-            finally:
-                payload_modified = (
-                    org_args != patch_context.args or
-                    org_kwargs != patch_context.kwargs)
+        if not self._tracing_context:
+            yield patch_context, False
+
+        org_args = deepcopy(patch_context.args)
+        org_kwargs = deepcopy(patch_context.kwargs)
+
+        try:
+            self.inject_tracing_context(
+                patch_context, self._tracing_context)
+        except Exception as err:
+            self._logger.error(
+                f"Injection failed: {err}. Take unmodified parameters.")
+            patch_context.args = org_args
+            patch_context.kwargs = org_kwargs
+        finally:
+            payload_modified = (
+                org_args != patch_context.args or
+                org_kwargs != patch_context.kwargs)
 
         yield patch_context, payload_modified
 
