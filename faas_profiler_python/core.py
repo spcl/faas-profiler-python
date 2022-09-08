@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
+"""
+Module for Profiler Core functionality
+"""
 from __future__ import annotations
-import json
-from typing import List, Type
-from multiprocessing import Process, connection
 
+import json
+import sys
 import os
 import importlib
+import importlib.util
 import inspect
 import logging
 import traceback
+
+from typing import List, Type
+from multiprocessing import Process, connection
+from abc import ABC
 
 from faas_profiler_python.config import (
     MeasuringState,
@@ -21,11 +27,10 @@ from faas_profiler_python.config import (
 from faas_profiler_python.utilis import Loggable, split_plugin_name
 
 
-def _load_external_plugin(requested_plugin: Type[UnresolvedPlugin]):
-    pass
-
-
-def split_plugin_list_by_subclass(plugins, subclass):
+def split_plugin_list_by_subclass(plugins: list, subclass: Type) -> tuple:
+    """
+    Splits a list of classes into two groups based on a parent class.
+    """
     subcls_group = []
     remainder = []
     for plugin in plugins:
@@ -37,7 +42,11 @@ def split_plugin_list_by_subclass(plugins, subclass):
     return (subcls_group, remainder)
 
 
-class BasePlugin:
+class BasePlugin(ABC):
+    """
+    Parent class for all plugins in FaaS Profiler.
+    Plugins are classes that can be loaded dynamically based on the configuration.
+    """
 
     _logger = logging.getLogger("BasePlugin")
     _logger.setLevel(logging.INFO)
@@ -48,22 +57,29 @@ class BasePlugin:
         requested_plugins: List[UnresolvedPlugin]
     ) -> List[BasePlugin]:
         """
-
+        Loads a list of unresolved plugins found in the configuration.
         """
         loaded_plugins = []
         for requested_plugin in requested_plugins:
-            # if requested_plugin.external_path:
-            #     loaded_plugins.append(_load_external_plugin(requested_plugin))
-
             _name = requested_plugin.name
             _modules, _klass = split_plugin_name(_name)
             _sub_module_name = ".".join(_modules)
-            _full_module_name = f"{cls.__module__}.{_sub_module_name}"
+
             try:
-                imported_module = importlib.import_module(_full_module_name)
+                if requested_plugin.external_path:
+                    _full_module_spec = requested_plugin.external_path
+                    spec = importlib.util.spec_from_file_location(
+                        _sub_module_name, requested_plugin.external_path)
+                    imported_module = importlib.util.module_from_spec(spec)
+                    sys.modules[_sub_module_name] = imported_module
+                    spec.loader.exec_module(imported_module)
+                else:
+                    _full_module_spec = f"{cls.__module__}.{_sub_module_name}"
+                    imported_module = importlib.import_module(
+                        _full_module_spec)
             except (ImportError, OSError, ModuleNotFoundError) as err:
                 cls._logger.error(
-                    f"Could not import {_full_module_name} for plugin {_name}: {err}")
+                    f"Could not import {_full_module_spec} for plugin {_name}: {err}")
                 continue
 
             if hasattr(imported_module, _klass):
@@ -72,13 +88,13 @@ class BasePlugin:
                     loaded_plugins.append(LoadedPlugin(
                         _name, _plugin, requested_plugin.parameters))
                     cls._logger.info(
-                        f"Loaded plugin for {_name} at {_full_module_name}")
+                        f"Loaded plugin for {_name} at {_full_module_spec}")
                 else:
                     cls._logger.error(
                         f"Requested attribute {_plugin} is not a class or not a subclass of {cls}")
             else:
                 cls._logger.error(
-                    f"In module {_full_module_name} no attribute with {_klass} was found.")
+                    f"In module {_full_module_spec} no attribute with {_klass} was found.")
 
         return loaded_plugins
 
@@ -245,6 +261,11 @@ class PeriodicProcess(Process):
             ))
 
     def wait_for_state(self, state: MeasuringState, timeout: int = 10):
+        """
+        Busy spins for a status of the parent pipe.
+        Returns True if the status was reached,
+        If an error occurred, the error and stacktrace is output.
+        """
         if self.parent_connection.poll(timeout):
             feedback = self.parent_connection.recv()
             if feedback.state == state:
@@ -253,3 +274,5 @@ class PeriodicProcess(Process):
                 error, tb = feedback.data
                 print(tb)
                 raise error
+
+        return False
