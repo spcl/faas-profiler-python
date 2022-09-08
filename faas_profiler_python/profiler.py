@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-TODO:
+Entry point for all measurements and profiling.
+The Profiles class handles all measurements and tracing.
 """
 
-from datetime import datetime
 import os
+
+from datetime import datetime
 from typing import Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
@@ -45,6 +47,9 @@ def profile(config_file: str = None):
 
 
 class Profiler(Loggable):
+    """
+    Profiler entrypoint.
+    """
 
     def __init__(self, config_file: str = None) -> None:
         super().__init__()
@@ -97,7 +102,7 @@ class Profiler(Loggable):
 
     def __call__(self, func: Callable, *args, **kwargs) -> Any:
         """
-        Convenience wrapper to profile the given method.
+        Instrumentation wrapper to profile the given method.
         Profiles the given method and exports the results.
         """
         self.function = Function(func, args, kwargs)
@@ -114,6 +119,8 @@ class Profiler(Loggable):
 
         self.stop()
         self.export()
+
+        self._deinitialize_default_measurements()
 
         if error:
             raise error
@@ -230,7 +237,6 @@ class Profiler(Loggable):
         """
         Stops all default measurements
         """
-
         if not self.default_batch:
             return
 
@@ -240,9 +246,20 @@ class Profiler(Loggable):
             return
 
         self.logger.info(
-            "[DEFAULT MEASUREMENTS]: Stopping and deinitializing default measurements")
+            "[DEFAULT MEASUREMENTS]: Stopping default measurements")
 
         self.default_batch.stop()
+
+    def _deinitialize_default_measurements(self):
+        """
+        Deinitialize all default measurements.
+        """
+        if not self.default_batch:
+            return
+
+        self.logger.info(
+            "[DEFAULT MEASUREMENTS]: Deinitializing default measurements")
+
         self.default_batch.deinitialize()
 
     def _stop_periodic_measurements(self):
