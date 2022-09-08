@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
 
 from typing import Any, Callable
 from datetime import datetime
@@ -24,19 +25,21 @@ def invoke_instrumented_function(
 
     Returns
     -------
-    tuple = response, error, invoked_at, finished_at
+    tuple = response, error, traceback_list, invoked_at, finished_at
     """
     error = None
     response = None
     invoked_at = datetime.now()
+    traceback_list = []
     try:
         response = func(*func_args, **func_kwargs)
     except Exception as exc:
+        traceback_list = traceback.format_exc().split("\n")
         error = exc
     finally:
         finished_at = datetime.now()
 
-    return response, error, invoked_at, finished_at
+    return response, error, traceback_list, invoked_at, finished_at
 
 
 def get_arg_by_key_or_pos(args, kwargs, pos, kw, default: Any = None):
@@ -97,6 +100,17 @@ def encode_dict_to_base64_json(dict: dict) -> Any:
             return b64encode(json_string.encode("utf-8")).decode("utf-8")
         except Exception as err:
             raise ValueError(f"Could not encode to Base64: {err}")
+
+
+def combine_list_and_dict(
+    a_list: list,
+    a_dict: dict
+) -> dict:
+    """
+    Merges list und dict to dict
+    """
+    list_as_dict = {idx: val for idx, val in enumerate(a_list)}
+    return {**list_as_dict, **a_dict}
 
 
 class Loggable:

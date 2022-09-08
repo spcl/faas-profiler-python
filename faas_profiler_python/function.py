@@ -17,12 +17,16 @@ def create_aws_lambda_function_context() -> Type[FunctionContext]:
     """
     _function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "unidentified")
     _handler = os.environ.get("_HANDLER", "unidentified")
+    _region = os.environ.get("AWS_REGION", "unidentified")
+    _max_memory = os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", None)
 
     return FunctionContext(
         provider=Provider.AWS,
         runtime=Runtime.PYTHON,
+        region=_region,
         function_name=_function_name,
-        handler=_handler)
+        handler=_handler,
+        max_memory=_max_memory)
 
 
 def create_gcp_function_context() -> Type[FunctionContext]:
@@ -31,12 +35,18 @@ def create_gcp_function_context() -> Type[FunctionContext]:
     """
     _function_name = os.environ.get("K_SERVICE", "unidentified")
     _handler = os.environ.get("FUNCTION_TARGET", "unidentified")
+    _region = os.environ.get("FUNCTION_REGION", "unidentified")
+    _max_memory = os.environ.get("FUNCTION_MEMORY_MB", None)
+    _max_execution_time = os.environ.get("FUNCTION_TIMEOUT_SEC", None)
 
     return FunctionContext(
         provider=Provider.GCP,
         runtime=Runtime.PYTHON,
+        region=_region,
         function_name=_function_name,
-        handler=_handler)
+        handler=_handler,
+        max_memory=_max_memory,
+        max_execution_time=_max_execution_time)
 
 
 def resolve_function_context() -> Type[FunctionContext]:

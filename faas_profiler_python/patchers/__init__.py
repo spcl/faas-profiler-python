@@ -270,7 +270,7 @@ class FunctionPatcher(BasePlugin, Loggable):
             response=None)
 
         with self._modified_payload(patch_context) as (patch_context, payload_modified):
-            response, error, invoked_at, finished_at = invoke_instrumented_function(
+            response, error, _, invoked_at, finished_at = invoke_instrumented_function(
                 function, patch_context.args, patch_context.kwargs)
 
         patch_context.response = response

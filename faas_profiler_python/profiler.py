@@ -19,8 +19,12 @@ from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
 from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
 from faas_profiler_python.exporters import Exporter, ResultCollector
-from faas_profiler_python.core import BatchExecution, PeriodicProcess, split_plugin_list_by_subclass
-from faas_profiler_python.utilis import Loggable, invoke_instrumented_function
+from faas_profiler_python.utilis import Loggable, invoke_instrumented_function, combine_list_and_dict
+from faas_profiler_python.core import (
+    BatchExecution,
+    PeriodicProcess,
+    split_plugin_list_by_subclass
+)
 
 
 def profile(config_file: str = None):
@@ -106,16 +110,31 @@ class Profiler(Loggable):
         Profiles the given method and exports the results.
         """
         self.function = Function(func, args, kwargs)
+        self.function_context.arguments = combine_list_and_dict(args, kwargs)
+        self.function_context.environment_variables = dict(os.environ)
 
         self.start()
 
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
-        response, error, executed_at, finished_at = invoke_instrumented_function(
+        response, error, traceback_list, executed_at, finished_at = invoke_instrumented_function(
             func, args, kwargs)
         self.logger.info("-- FUNCTION EXCUTED --")
 
         self.function_context.handler_executed_at = executed_at
         self.function_context.handler_finished_at = finished_at
+
+        if error:
+            self.function_context.has_error = True
+            self.function_context.error_type = error.__class__.__name__
+            self.function_context.error_message = str(error)
+            self.function_context.traceback = traceback_list
+            self.function_context.response = None
+        else:
+            self.function_context.has_error = False
+            self.function_context.error_type = None
+            self.function_context.error_message = None
+            self.function_context.traceback = []
+            self.function_context.response = response
 
         self.stop()
         self.export()
@@ -160,7 +179,8 @@ class Profiler(Loggable):
         Exports the profiling data.
         """
         if not self.config.exporters:
-            self.logger.warn("No exporters defined. Will discard results.")
+            self.logger.warn(
+                "[EXPORT]: No exporters defined. Will discard results.")
             return
 
         self.logger.info(
@@ -185,6 +205,10 @@ class Profiler(Loggable):
             except Exception as err:
                 self.logger.error(
                     f"Exporting with {exporter_plugin.cls} failed: {err}")
+
+        self.logger.info(
+            f"[EXPORT]: Delete tmp storage file: {self.periodic_results_path}")
+        os.remove(self.periodic_results_path)
 
     def _start_default_measurements(self):
         """
