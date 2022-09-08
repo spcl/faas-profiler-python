@@ -11,6 +11,7 @@ import platform
 import os
 import pkg_resources
 import psutil
+import ntplib
 
 from datetime import datetime
 
@@ -18,7 +19,8 @@ from faas_profiler_python.measurements import Measurement
 from faas_profiler_core.models import (
     InformationEnvironment,
     InformationOperatingSystem,
-    InformationIsWarm
+    InformationIsWarm,
+    InformationTimeShift
 )
 
 
@@ -60,9 +62,6 @@ class OperatingSystem(Measurement):
 
 
 class IsWarm(Measurement):
-    """
-
-    """
 
     WARM_IDENT_FILE = os.path.join(os.path.abspath("/tmp"), "is-warm.txt")
 
@@ -124,3 +123,17 @@ class IsWarm(Measurement):
                 os.utime(self.WARM_IDENT_FILE, None)
         except Exception as err:
             self.logger.error(f"Could not set function to warm: {err}")
+
+
+class TimeShift(Measurement):
+
+    def initialize(self, server: str = "pool.ntp.org", **kwargs) -> None:
+        self.client = ntplib.NTPClient()
+        self.server = server
+
+    def results(self) -> dict:
+        response = self.client.request(self.server, version=3)
+        return InformationTimeShift(
+            server=self.server,
+            offset=response.offset
+        ).dump()
