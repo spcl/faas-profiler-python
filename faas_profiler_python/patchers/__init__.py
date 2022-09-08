@@ -6,13 +6,14 @@ Patching functionality
 
 from __future__ import annotations
 
+import sys
 import logging
 import importlib
 
 from contextlib import contextmanager
 from threading import Lock
 from typing import Any, Callable, List, Set, Type
-from wrapt import wrap_function_wrapper
+from wrapt import wrap_function_wrapper, when_imported
 from dataclasses import dataclass
 from copy import deepcopy
 
@@ -47,6 +48,11 @@ class FunctionPatcher(BasePlugin, Loggable):
     __key__: str = None
 
     def __new__(cls: type[FunctionPatcher]) -> FunctionPatcher:
+        """
+        Creates new Patcher for given function.
+
+        Makes sure that only one patcher exists for given function in given module.
+        """
         if cls.module_name is None or cls.function_name is None:
             raise ValueError(
                 f"Cannot initialize patcher {cls} without module name and function name.")
@@ -166,6 +172,21 @@ class FunctionPatcher(BasePlugin, Loggable):
         if self._patched:
             return True
 
+        if self.module_name not in sys.modules:
+            self.logger.info(
+                f"Module {self.module_name} not yet imported. Set import hook.")
+            when_imported(
+                self.module_name)(
+                lambda *args,
+                **kwargs: self._wrap_function())
+        else:
+            self._wrap_function()
+
+    def _wrap_function(self) -> bool:
+        """
+        Wraps the requsted function with the function wrapper.
+        Executed with lock.
+        """
         with self._lock:
             try:
                 wrap_function_wrapper(
@@ -289,7 +310,6 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         Safely executes the extract context hook
         """
-        # breakpoint()
         try:
             return self.extract_outbound_context(patch_context)
         except Exception as err:
