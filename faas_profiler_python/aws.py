@@ -443,7 +443,11 @@ OPERATION_BY_NAME = {
         "invoke": AWSOperation.LAMBDA_INVOKE
     },
     AWSService.S3: {
-        "putobject": AWSOperation.S3_OBJECT_CREATE
+        "putobject": AWSOperation.S3_OBJECT_CREATE,
+        "getobject": AWSOperation.S3_OBJECT_GET,
+        "deleteobject": AWSOperation.S3_OBJECT_REMOVED,
+        "headobject": AWSOperation.S3_OBJECT_HEAD,
+        "headbucket": AWSOperation.S3_BUCKET_HEAD
     },
     AWSService.DYNAMO_DB: {
         "putitem": AWSOperation.DYNAMO_DB_UPDATE,

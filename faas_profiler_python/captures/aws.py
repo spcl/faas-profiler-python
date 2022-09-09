@@ -4,95 +4,222 @@
 Module for AWS invocation capturing.
 """
 
-import io
 from typing import Type
 
 from faas_profiler_python.captures import Capture
 from faas_profiler_python.patchers import OutboundContext
 from faas_profiler_python.patchers.botocore import BotocoreAPI
-from faas_profiler_python.patchers.io import Open
+from faas_profiler_python.patchers.io import OpenIO
 
-from faas_profiler_core.constants import AWSService
-from faas_profiler_core.models import S3CaptureItem
+from faas_profiler_core.constants import (
+    Provider,
+    InternalService,
+    InternalOperation,
+    AWSService,
+    AWSOperation
+)
+from faas_profiler_core.models import (
+    S3Capture,
+    S3AccessItem,
+    EFSAccessItem,
+    EFSCapture
+)
 
 
-class S3Capture(Capture):
+class S3Access(Capture):
     requested_patch = BotocoreAPI
 
-    def initialize(self, *args, **kwargs) -> None:
+    def initialize(
+        self,
+        *args,
+        bucket_names: list = None,
+        **kwargs
+    ) -> None:
         super().initialize(*args, **kwargs)
-        self._invocations = []
+
+        self._bucket_names = bucket_names
+        self._captured_buckets = []
+
+        self._obj_created = {}
+        self._obj_deleted = {}
+        self._obj_get = {}
+        self._obj_head = {}
 
     def capture(
         self,
         outbound_context: Type[OutboundContext]
     ) -> None:
+        """
+        Capture S3 access.
+        """
         if outbound_context.service != AWSService.S3:
             return
 
-        api_params = outbound_context.tags.get("parameters")
-        self._invocations.append(
-            S3CaptureItem(
-                operation=outbound_context.operation,
-                parameters=api_params,
-                bucket_name=outbound_context.identifier.get("bucket_name"),
-                object_key=outbound_context.identifier.get("object_key"),
-                object_size=self._get_size_by_body(api_params),
-                request_method=outbound_context.tags.get("request_method"),
-                request_status=outbound_context.tags.get("request_status"),
-                request_url=outbound_context.tags.get("request_url"),
-                request_uri=outbound_context.tags.get("request_uri"),
-                execution_time=(
-                    outbound_context.finished_at -
-                    outbound_context.invoked_at).total_seconds()))
+        _bucket_name = outbound_context.identifier.get("bucket_name")
+        _object_key = outbound_context.identifier.get("object_key")
+        _size = outbound_context.tags.get("size")
+        _execution_time = outbound_context.overhead_time
 
-    def _get_size_by_body(self, api_params):
-        if not api_params:
-            return None
+        if self._bucket_names and _bucket_name not in self._bucket_names:
+            self.logger.info(
+                f"[S3 Capture]: Ignore S3 Operation on bucket {_bucket_name} and object {_object_key}. Bucket is not of target.")
+            return
 
-        body = api_params.get("Body", None)
-        if body and isinstance(body, io.BytesIO):
-            return body.getbuffer().nbytes
+        self._captured_buckets.append(_bucket_name)
+
+        if outbound_context.operation == AWSOperation.S3_OBJECT_GET:
+            bkt_obj_get = self._obj_get.setdefault(_bucket_name, {})
+            prev_gets = bkt_obj_get.setdefault(_object_key, ([], []))
+
+            if _size:
+                prev_gets[0].append(_size)
+            if _execution_time:
+                prev_gets[1].append(_execution_time)
+
+        if outbound_context.operation == AWSOperation.S3_OBJECT_CREATE:
+            bkt_obj_create = self._obj_created.setdefault(_bucket_name, {})
+            prev_creates = bkt_obj_create.setdefault(_object_key, ([], []))
+
+            if _size:
+                prev_creates[0].append(_size)
+            if _execution_time:
+                prev_creates[1].append(_execution_time)
+
+        if outbound_context.operation == AWSOperation.S3_OBJECT_REMOVED:
+            bkt_obj_deleted = self._obj_deleted.setdefault(_bucket_name, {})
+            prev_deletes = bkt_obj_deleted.setdefault(_object_key, ([], []))
+
+            if _size:
+                prev_deletes[0].append(_size)
+            if _execution_time:
+                prev_deletes[1].append(_execution_time)
+
+        if outbound_context.operation == AWSOperation.S3_OBJECT_HEAD:
+            bkt_obj_head = self._obj_head.setdefault(_bucket_name, {})
+            prev_heads = bkt_obj_head.setdefault(_object_key, ([], []))
+
+            if _execution_time:
+                prev_heads[1].append(_execution_time)
 
     def results(self) -> list:
-        return [
-            inc.dump() for inc in self._invocations]
+        captures = []
+
+        for bkt_name in self._captured_buckets:
+            captures.append(
+                S3Capture(
+                    bucket_name=bkt_name,
+                    get_objects=self._capture_mappings_to_items(
+                        self._obj_get.get(
+                            bkt_name,
+                            {}),
+                        mode=AWSOperation.S3_OBJECT_GET),
+                    create_objects=self._capture_mappings_to_items(
+                        self._obj_created.get(
+                            bkt_name,
+                            {}),
+                        mode=AWSOperation.S3_OBJECT_CREATE),
+                    deleted_objects=self._capture_mappings_to_items(
+                        self._obj_deleted.get(
+                            bkt_name,
+                            {}),
+                        mode=AWSOperation.S3_OBJECT_REMOVED),
+                    head_objects=self._capture_mappings_to_items(
+                        self._obj_head.get(
+                            bkt_name,
+                            {}),
+                        mode=AWSOperation.S3_OBJECT_HEAD)))
+
+        return captures
+
+    def _capture_mappings_to_items(
+        self,
+        capture_mapping: dict,
+        mode: AWSOperation
+    ) -> list:
+        items = []
+        for obj_k, (sizes, exe_times) in capture_mapping.items():
+            items.append(S3AccessItem(
+                mode=mode,
+                object_key=obj_k,
+                object_sizes=sizes,
+                execution_times=exe_times))
+
+        return items
 
 
-class EFSCapture(Capture):
-    requested_patch = Open
+class EFSAccess(Capture):
+    requested_patch = OpenIO
 
-    def initialize(self, parameters: dict = {}) -> None:
-        self.mounting_points = parameters.get("mount_points")
-        self.invocations = []
+    def initialize(self, mounting_points: list, *args, **kwargs) -> None:
+        super().initialize(*args, **kwargs)
+        self._mounting_points = mounting_points
 
-        if not self.mounting_points:
+        if not self._mounting_points:
             raise ValueError(
                 "Cannot initialise EFSCapture without mounting points")
-        return super().initialize(parameters)
 
-    def capture(self, invocation_context: Type[OutboundContext]) -> None:
-        for monting_point in self.mounting_points:
-            file = invocation_context.tags.get("file")
-            if file and file.startswith(monting_point):
-                self.invocations.append({
-                    "efs_mount": monting_point,
-                    "file": file,
-                    "mode": self._determine_mode(invocation_context.tags.get("mode")),
-                    "encoding": invocation_context.tags.get("encoding"),
-                    # "io_type": str(io_return.wrapper_type),
-                    "execution_time": invocation_context.execution_time
-                })
+        self._file_reads = {
+            mnt_point: {} for mnt_point in self._mounting_points}
+        self._file_writes = {
+            mnt_point: {} for mnt_point in self._mounting_points}
+
+    def capture(
+        self,
+        outbound_context: Type[OutboundContext]
+    ) -> None:
+        """
+        Capture a EFS file access.
+        """
+        if outbound_context.provider != Provider.INTERNAL:
+            return
+
+        if outbound_context.service != InternalService.IO:
+            return
+
+        _file = outbound_context.tags.get("file")
+        _size = outbound_context.tags.get("size")
+        _execution_time = outbound_context.overhead_time
+
+        for mounting_point in self._mounting_points:
+            _efs_mnt_reads = self._file_reads[mounting_point]
+            _efs_mnt_writes = self._file_writes[mounting_point]
+            if _file and str(_file).startswith(mounting_point):
+                if (outbound_context.operation == InternalOperation.IO_READ or
+                        outbound_context.operation == InternalOperation.IO_READ_WRITE):
+                    prev_reads = _efs_mnt_reads.setdefault(_file, ([], []))
+                    if _size is not None:
+                        prev_reads[0].append(_size)
+                    if _execution_time:
+                        prev_reads[1].append(_execution_time)
+
+                if (outbound_context.operation == InternalOperation.IO_WRITE or
+                        outbound_context.operation == InternalOperation.IO_READ_WRITE):
+                    prev_writes = _efs_mnt_writes.setdefault(_file, ([], []))
+                    if _size is not None:
+                        prev_writes[0].append(_size)
+                    if _execution_time:
+                        prev_writes[1].append(_execution_time)
 
     def results(self) -> list:
-        return self.invocations
+        captures = []
+        for mounting_point in self._mounting_points:
+            capture = EFSCapture(mounting_point)
+            mnt_writes = self._file_writes.get(mounting_point, {})
+            for file, (sizes, execution_times) in mnt_writes.items():
+                capture.written_files.append(EFSAccessItem(
+                    mode=InternalOperation.IO_WRITE,
+                    file=file,
+                    file_sizes=sizes,
+                    execution_times=execution_times))
 
-    def _determine_mode(self, mode: str) -> str:
-        if "r+" in mode or "w+" in mode or "a" in mode:
-            return "read/write"
+            mnt_reads = self._file_reads.get(mounting_point, {})
+            for file, (sizes, execution_times) in mnt_reads.items():
+                capture.read_files.append(EFSAccessItem(
+                    mode=InternalOperation.IO_READ,
+                    file=file,
+                    file_sizes=sizes,
+                    execution_times=execution_times))
 
-        if "r" in mode:
-            return "read"
+            captures.append(capture)
 
-        if "w" in mode or "a" in mode:
-            return "write"
+        return captures

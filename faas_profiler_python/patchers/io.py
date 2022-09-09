@@ -37,7 +37,7 @@ IO_MODE_TO_OPERATION = {
 }
 
 
-class Open(FunctionPatcher):
+class OpenIO(FunctionPatcher):
     module_name: str = "builtins"
     function_name: str = "open"
 

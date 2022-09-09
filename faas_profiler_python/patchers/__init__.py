@@ -269,9 +269,9 @@ class FunctionPatcher(BasePlugin, Loggable):
             error=None,
             response=None)
 
-        with self._modified_payload(patch_context) as (patch_context, payload_modified):
-            response, error, _, invoked_at, finished_at = invoke_instrumented_function(
-                function, patch_context.args, patch_context.kwargs)
+        self._modify_payload(patch_context)
+        response, error, _, invoked_at, finished_at = invoke_instrumented_function(
+            function, patch_context.args, patch_context.kwargs)
 
         patch_context.response = response
         patch_context.error = error
@@ -317,13 +317,12 @@ class FunctionPatcher(BasePlugin, Loggable):
                 f"Execution outbound context extraction for patched function "
                 f"{self.function_name} in module {self._complete_module_name} failed: {err}")
 
-    @contextmanager
-    def _modified_payload(self, patch_context: Type[PatchContext]):
+    def _modify_payload(self, patch_context: Type[PatchContext]) -> None:
         """
         Calls the tracer to modify the payload if required.
         """
         if not self._tracing_context:
-            yield patch_context, False
+            return
 
         org_args = copy(patch_context.args)
         org_kwargs = copy(patch_context.kwargs)
@@ -336,12 +335,6 @@ class FunctionPatcher(BasePlugin, Loggable):
                 f"Injection failed: {err}. Take unmodified parameters.")
             patch_context.args = org_args
             patch_context.kwargs = org_kwargs
-        finally:
-            payload_modified = (
-                org_args != patch_context.args or
-                org_kwargs != patch_context.kwargs)
-
-        yield patch_context, payload_modified
 
 
 """

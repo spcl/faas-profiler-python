@@ -37,6 +37,52 @@ def service_prefix(botocore_instance) -> str:
 
 
 """
+Botocore Request Handlers
+"""
+
+
+def s3_handler(
+    patch_context: Type[PatchContext],
+    outbound_context: Type[OutboundContext]
+) -> None:
+    """
+    Handle S3 request
+    """
+    api_parameters = get_arg_by_key_or_pos(
+        patch_context.args,
+        patch_context.kwargs,
+        pos=1,
+        kw="api_params",
+        default={})
+
+    _body_size, _content_length = None, None
+
+    if patch_context.response:
+        _resp = patch_context.response
+        if "ContentLength" in _resp or "content-length" in _resp:
+            _content_length = _resp.get(
+                "content-length") or _resp.get("ContentLength")
+        elif "ResponseMetadata" in patch_context.response:
+            req_meta_data = _resp["ResponseMetadata"]
+            _content_length = req_meta_data.get(
+                "content-length") or req_meta_data.get("ContentLength")
+
+    if "Body" in api_parameters:
+        _body_size = getattr(api_parameters["Body"], "_size", None)
+
+    if outbound_context.operation == AWSOperation.S3_OBJECT_CREATE:
+        _size = _body_size if _body_size else _content_length
+    else:
+        _size = _content_length if _content_length else _body_size
+
+    outbound_context.set_tags({"size": _size})
+
+
+REQUEST_HANDLERS_BY_SERVICE = {
+    AWSService.S3: s3_handler
+}
+
+"""
 Botocore Patcher
 """
 
@@ -68,7 +114,6 @@ class BotocoreAPI(FunctionPatcher):
                 patch_context.args, patch_context.kwargs, pos=0, kw="operation_name")
             operation = operation_by_operation_name(
                 service, str(operation_name).lower())
-
             self.logger.info(
                 f"[OUTBOUND] Detected AWS API call operation {operation}")
 
@@ -84,6 +129,10 @@ class BotocoreAPI(FunctionPatcher):
 
             meta = getattr(patch_context.instance, "meta", None)
             http_method, http_uri = self._get_http_info(meta, operation_name)
+
+            _service_handler = REQUEST_HANDLERS_BY_SERVICE.get(service)
+            if _service_handler:
+                _service_handler(patch_context, outbound_context)
 
             outbound_context.set_tags({
                 "parameters": {
@@ -148,7 +197,6 @@ class BotocoreAPI(FunctionPatcher):
             except InjectionError as err:
                 self.logger.warn(f"[INJECTION] Injection failed: {err}")
             else:
-                print(api_parameters)
                 self.logger.info("[INJECTION] Payload injected.")
         else:
             self.logger.error(
