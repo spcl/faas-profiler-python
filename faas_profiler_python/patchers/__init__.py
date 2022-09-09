@@ -15,7 +15,7 @@ from threading import Lock
 from typing import Any, Callable, List, Set, Type
 from wrapt import wrap_function_wrapper, when_imported
 from dataclasses import dataclass
-from copy import deepcopy
+from copy import copy
 
 from faas_profiler_core.models import OutboundContext, TracingContext
 
@@ -325,8 +325,8 @@ class FunctionPatcher(BasePlugin, Loggable):
         if not self._tracing_context:
             yield patch_context, False
 
-        org_args = deepcopy(patch_context.args)
-        org_kwargs = deepcopy(patch_context.kwargs)
+        org_args = copy(patch_context.args)
+        org_kwargs = copy(patch_context.kwargs)
 
         try:
             self.inject_tracing_context(

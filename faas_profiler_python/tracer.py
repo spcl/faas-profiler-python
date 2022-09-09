@@ -17,6 +17,7 @@ from faas_profiler_python.patchers import (
     request_patcher
 )
 from faas_profiler_python.patchers.botocore import BotocoreAPI
+from faas_profiler_python.patchers.requests import SessionSend
 from faas_profiler_python.payload import Payload
 from faas_profiler_python.utilis import Loggable
 
@@ -31,7 +32,8 @@ class DistributedTracer(Loggable):
     """
 
     outbound_libraries = [
-        BotocoreAPI
+        BotocoreAPI,
+        SessionSend
     ]
 
     def __init__(
