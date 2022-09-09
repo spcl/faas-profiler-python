@@ -62,7 +62,8 @@ class S3Access(Capture):
 
         if self._bucket_names and _bucket_name not in self._bucket_names:
             self.logger.info(
-                f"[S3 Capture]: Ignore S3 Operation on bucket {_bucket_name} and object {_object_key}. Bucket is not of target.")
+                f"[S3 Capture]: Ignore S3 Operation on bucket {_bucket_name} and"
+                "object {_object_key}. Bucket is not of target.")
             return
 
         self._captured_buckets.append(_bucket_name)

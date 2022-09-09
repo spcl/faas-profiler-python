@@ -89,7 +89,8 @@ class DistributedTracer(Loggable):
         Starts tracing outgoing requests by patching the libraries that make these requests.
         """
         if not self.config.tracing_enabled:
-            self.logger.warn("[TRACER]: Do not patch outgoing request. Tracer disabled.")
+            self.logger.warn(
+                "[TRACER]: Do not patch outgoing request. Tracer disabled.")
 
         _trace_outgoing_requests = self.config.trace_outgoing_requests
         if _trace_outgoing_requests == ALL_PATCHERS:
@@ -97,12 +98,14 @@ class DistributedTracer(Loggable):
                 self._prepare_patcher(outbound_library)
         else:
             for requested_outgoing_lib in _trace_outgoing_requests:
-                outbound_library = AVAILABLE_OUTBOUND_PATCHERS.get(requested_outgoing_lib)
+                outbound_library = AVAILABLE_OUTBOUND_PATCHERS.get(
+                    requested_outgoing_lib)
                 if outbound_library is None:
-                    self.logger.warn(f"[TRACER]: Could not set patcher for {requested_outgoing_lib}. Not available.")
+                    self.logger.warn(
+                        f"[TRACER]: Could not set patcher for {requested_outgoing_lib}. Not available.")
                     continue
-                
-                self._prepare_patcher(outbound_library)     
+
+                self._prepare_patcher(outbound_library)
 
     def stop_tracing_outbound_requests(self):
         """
@@ -143,7 +146,8 @@ class DistributedTracer(Loggable):
         self._tracing_context = self._inferre_tracing_context(
             parent_context=self.payload.extract_tracing_context())
 
-        self.logger.info(f"[TRACER]: New Tracing Context: {self._tracing_context}")
+        self.logger.info(
+            f"[TRACER]: New Tracing Context: {self._tracing_context}")
 
     def handle_outbound_request(
         self,
@@ -166,7 +170,8 @@ class DistributedTracer(Loggable):
         self._outbound_contexts.append(outbound_context)
         self._recorded_identifier.add(identifier_string)
 
-        self.logger.info(f"[TRACER]: Recorded outgoing request: {identifier_string}")
+        self.logger.info(
+            f"[TRACER]: Recorded outgoing request: {identifier_string}")
 
     """
     Private methods

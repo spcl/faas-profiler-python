@@ -10,7 +10,6 @@ import sys
 import logging
 import importlib
 
-from contextlib import contextmanager
 from threading import Lock
 from typing import Any, Callable, List, Set, Type
 from wrapt import wrap_function_wrapper, when_imported
