@@ -13,9 +13,14 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Any, Dict, List, Type
 from collections import namedtuple
-
 from faas_profiler_python.utilis import lowercase_keys
 from faas_profiler_core.constants import Provider
+
+"""
+Constants
+"""
+
+ALL_PATCHERS = "all_patchers"
 
 """
 Exceptions
@@ -63,6 +68,8 @@ class Config:
 
     _logger = logging.getLogger("Config")
     _logger.setLevel(logging.INFO)
+
+    WILDCARD_KEY = "*"
 
     PLUGIN_NAME_KEY = "name"
     PLUGIN_FROM_KEY = "from"
@@ -131,6 +138,28 @@ class Config:
 
         self._outbound_requests_tables = self._parse_outbound_requests_tables(
             self.OUTBOUND_REQUESTS_TABLES_KEY)
+
+    @property
+    def tracing_enabled(self) -> bool:
+        """
+        Returns True if tracing is enabled.
+        """
+        return self._tracing.get("enabled", True)
+
+    @property
+    def trace_outgoing_requests(self) -> List[str]:
+        """
+        Returns a list of outgoing request types which should be traced.
+        """
+        trace_out_requests = self._tracing.get(
+            "trace_outgoing_requests", self.WILDCARD_KEY)
+        if trace_out_requests == self.WILDCARD_KEY:
+            return ALL_PATCHERS
+
+        if isinstance(trace_out_requests, list):
+            return [str(lib) for lib in trace_out_requests]
+
+        return []
 
     @property
     def outbound_requests_tables(self) -> Dict[Provider, dict]:

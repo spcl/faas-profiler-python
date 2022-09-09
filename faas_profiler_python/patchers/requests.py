@@ -3,10 +3,10 @@
 """
 Patchers for Requests
 """
+from __future__ import annotations
 
 import json
 
-from __future__ import annotations
 from typing import Type
 from urllib.parse import urlparse
 

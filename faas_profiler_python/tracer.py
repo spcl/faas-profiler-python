@@ -11,7 +11,7 @@ from uuid import uuid4
 from faas_profiler_core.constants import Provider
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
 
-from faas_profiler_python.config import Config, Function
+from faas_profiler_python.config import Config, Function, ALL_PATCHERS
 from faas_profiler_python.patchers import (
     FunctionPatcher,
     request_patcher
@@ -25,16 +25,16 @@ from faas_profiler_python.utilis import Loggable
 Distributed Tracer
 """
 
+AVAILABLE_OUTBOUND_PATCHERS = {
+    "aws": BotocoreAPI,
+    "requests": SessionSend
+}
+
 
 class DistributedTracer(Loggable):
     """
     Implementation of a distributed Tracer.
     """
-
-    outbound_libraries = [
-        BotocoreAPI,
-        SessionSend
-    ]
 
     def __init__(
         self,
@@ -88,13 +88,21 @@ class DistributedTracer(Loggable):
         """
         Starts tracing outgoing requests by patching the libraries that make these requests.
         """
-        for outbound_library in self.outbound_libraries:
-            patcher = request_patcher(outbound_library)
-            patcher.register_observer(self.handle_outbound_request)
-            patcher.set_trace_context_to_inject(self.tracing_context)
-            patcher.activate()
+        if not self.config.tracing_enabled:
+            self.logger.warn("[TRACER]: Do not patch outgoing request. Tracer disabled.")
 
-            self._active_outbound_patchers.append(patcher)
+        _trace_outgoing_requests = self.config.trace_outgoing_requests
+        if _trace_outgoing_requests == ALL_PATCHERS:
+            for outbound_library in AVAILABLE_OUTBOUND_PATCHERS.values():
+                self._prepare_patcher(outbound_library)
+        else:
+            for requested_outgoing_lib in _trace_outgoing_requests:
+                outbound_library = AVAILABLE_OUTBOUND_PATCHERS.get(requested_outgoing_lib)
+                if outbound_library is None:
+                    self.logger.warn(f"[TRACER]: Could not set patcher for {requested_outgoing_lib}. Not available.")
+                    continue
+                
+                self._prepare_patcher(outbound_library)     
 
     def stop_tracing_outbound_requests(self):
         """
@@ -102,6 +110,17 @@ class DistributedTracer(Loggable):
         """
         for active_patcher in self._active_outbound_patchers:
             active_patcher.deactivate()
+
+    def _prepare_patcher(self, outbound_library):
+        """
+        Activate patcher for injection.
+        """
+        patcher = request_patcher(outbound_library)
+        patcher.register_observer(self.handle_outbound_request)
+        patcher.set_trace_context_to_inject(self.tracing_context)
+        patcher.activate()
+
+        self._active_outbound_patchers.append(patcher)
 
     """
     Request handling methods
@@ -124,7 +143,7 @@ class DistributedTracer(Loggable):
         self._tracing_context = self._inferre_tracing_context(
             parent_context=self.payload.extract_tracing_context())
 
-        self.logger.info(f"NEW SPAN: {self._tracing_context}")
+        self.logger.info(f"[TRACER]: New Tracing Context: {self._tracing_context}")
 
     def handle_outbound_request(
         self,
@@ -141,11 +160,13 @@ class DistributedTracer(Loggable):
         identifier_string = outbound_context.identifier_string
         if identifier_string in self._recorded_identifier:
             self.logger.info(
-                f"Skip recording {identifier_string}. Already recorded.")
+                f"[TRACER]: Skip recording {identifier_string}. Already recorded.")
             return
 
         self._outbound_contexts.append(outbound_context)
         self._recorded_identifier.add(identifier_string)
+
+        self.logger.info(f"[TRACER]: Recorded outgoing request: {identifier_string}")
 
     """
     Private methods
@@ -160,7 +181,7 @@ class DistributedTracer(Loggable):
         """
         if not parent_context:
             self.logger.info(
-                "Parent tracing context is empty. Create new one.")
+                "[TRACER]: Parent tracing context is empty. Create new one.")
             return TracingContext(trace_id=uuid4(), record_id=uuid4())
 
         if parent_context.trace_id:
