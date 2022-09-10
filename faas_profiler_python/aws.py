@@ -3,6 +3,7 @@
 """
 Module for all AWS specific logic.
 """
+import base64
 import json
 
 from collections import namedtuple
@@ -134,6 +135,8 @@ class AWSEvent(Loggable):
             self.dynamodb_context(inbound_context)
         elif self.service == AWSService.SQS:
             self.sqs_context(inbound_context)
+        elif self.service == AWSService.SNS:
+            self.sns_context(inbound_context)
 
         return inbound_context
 
@@ -206,7 +209,7 @@ class AWSEvent(Loggable):
 
     def sqs_context(self, inbound_context: Type[InboundContext]) -> None:
         """
-        Creates inbound context for DynamoDB
+        Creates inbound context for SQS
         """
         _sqs_record = self.first_record
 
@@ -226,6 +229,32 @@ class AWSEvent(Loggable):
         })
         inbound_context.set_tags({
             "queue_url": _queue_url,
+            "message_id": _message_id
+        })
+
+    def sns_context(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Creates inbound context for SNS
+        """
+        _sns_record = self.first_record
+
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+
+        if "sns" not in _sns_record:
+            return None
+
+        _message_id = _sns_record["sns"].get("MessageId")
+        _topic_arn = _sns_record["sns"].get("TopicArn")
+
+        if not _message_id or not _topic_arn:
+            return
+
+        inbound_context.set_identifiers({
+            "topic_arn": _topic_arn,
+            "message_id": _message_id
+        })
+        inbound_context.set_tags({
+            "topic_arn": _topic_arn,
             "message_id": _message_id
         })
 
@@ -270,7 +299,15 @@ class AWSEvent(Loggable):
         """
         Extracts tracing context from SNS message attributes.
         """
-        pass
+        _sns_record = self.first_record
+        if "sns" not in _sns_record:
+            return
+
+        _sns_message = _sns_record["sns"]
+        msg_attr = _sns_message.get("MessageAttributes")
+        tracing_ctx = msg_attr.get(TRACE_CONTEXT_KEY, {})
+
+        return self._extract_tracing_context_from_msg_attr(tracing_ctx)
 
     def tracing_context_from_eventbridge(self) -> Type[TracingContext]:
         """
@@ -285,14 +322,18 @@ class AWSEvent(Loggable):
 
     def _extract_tracing_context_from_msg_attr(
         self,
-        attribute: dict
+        attr: dict
     ) -> Type[TracingContext]:
-        _datatype = attribute.get("dataType")
+        _datatype = attr["Type"] if "Type" in attr else attr.get("dataType")
         if _datatype == "String":
-            _tracing_string = attribute.get("stringValue", r"{}")
+            _tracing_string = attr["Value"] if "Value" in attr else attr.get(
+                "stringValue", r"{}")
             _tracing_obj = json.loads(_tracing_string)
         elif _datatype == "Binary":
-            pass
+            _tracing_bin = attr["Value"] if "Value" in attr else attr.get(
+                "binaryValue", r"{}")
+            _tracing_string = base64.b64decode(_tracing_bin)
+            _tracing_obj = json.loads(_tracing_string)
 
         return TracingContext(
             trace_id=_tracing_obj.get(TRACE_ID_HEADER),
