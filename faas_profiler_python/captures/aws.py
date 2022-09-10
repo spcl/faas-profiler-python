@@ -128,7 +128,7 @@ class S3Access(Capture):
                         self._obj_head.get(
                             bkt_name,
                             {}),
-                        mode=AWSOperation.S3_OBJECT_HEAD)))
+                        mode=AWSOperation.S3_OBJECT_HEAD)).dump())
 
         return captures
 
@@ -221,6 +221,6 @@ class EFSAccess(Capture):
                     file_sizes=sizes,
                     execution_times=execution_times))
 
-            captures.append(capture)
+            captures.append(capture.dump())
 
         return captures
