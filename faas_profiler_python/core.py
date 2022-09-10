@@ -18,6 +18,8 @@ from typing import List, Type
 from multiprocessing import Process, connection
 from abc import ABC
 
+from faas_profiler_core.constants import RecordDataType
+
 from faas_profiler_python.config import (
     MeasuringState,
     ProcessFeedback,
@@ -106,11 +108,14 @@ class BatchExecution(Loggable):
 
     def __init__(
         self,
-        plugins: List[LoadedPlugin]
+        plugins: List[LoadedPlugin],
+        batch_type: RecordDataType = RecordDataType.UNCATEGORIZED
     ) -> None:
         super().__init__()
         self.plugins = plugins
         self.plugin_objs = {}
+
+        self.batch_type = batch_type
 
     def initialize(self, *args, **kwargs):
         """
@@ -168,6 +173,7 @@ class BatchExecution(Loggable):
             try:
                 results.append({
                     "name": name,
+                    "type": self.batch_type.name,
                     "results": plugin_obj.results()
                 })
             except Exception as err:
