@@ -83,7 +83,8 @@ class ResultCollector(Loggable):
             tracing_context=tracing_context,
             inbound_context=inbound_context,
             outbound_contexts=outbound_contexts,
-            data=[RecordData.load(r) for r in self.results])
+            data={
+                r["name"]: RecordData.load(r) for r in self.results})
         self._raw_data = self.record.dump()
 
         self._record_id = tracing_context.record_id
