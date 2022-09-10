@@ -161,14 +161,14 @@ class Profiler(Loggable):
 
         self._start_capturing()
         self._start_default_measurements()
-        # self._start_periodic_measurements()
+        self._start_periodic_measurements()
 
     def stop(self) -> None:
         """
         Stops the profiling.
         """
         self.logger.info("Profile run stopped.")
-        # self._stop_periodic_measurements()
+        self._stop_periodic_measurements()
         self._stop_default_measurements()
         self._stop_capturing()
 
