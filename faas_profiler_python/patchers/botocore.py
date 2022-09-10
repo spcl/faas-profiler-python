@@ -110,7 +110,8 @@ SERVICE_BY_ENDPOINT = {
     "lambda": AWSService.LAMBDA,
     "s3": AWSService.S3,
     "dynamodb": AWSService.DYNAMO_DB,
-    "sqs": AWSService.SQS
+    "sqs": AWSService.SQS,
+    "sns": AWSService.SNS
 }
 
 
@@ -145,6 +146,10 @@ OPERATION_BY_NAME = {
     AWSService.SQS: {
         "sendmessage": AWSOperation.SQS_SEND,
         "sendmessagebatch": AWSOperation.SQS_SEND_BATCH
+    },
+    AWSService.SNS: {
+        "publish": AWSOperation.SNS_PUBLISH,
+        "publishbatch": AWSOperation.SNS_PUBLISH_BATCH
     }
 }
 

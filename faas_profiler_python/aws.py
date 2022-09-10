@@ -6,7 +6,6 @@ Module for all AWS specific logic.
 import json
 
 from collections import namedtuple
-from datetime import datetime
 from typing import Any, List, Tuple, Type
 
 from faas_profiler_core.models import TracingContext, InboundContext, OutboundContext
@@ -502,12 +501,14 @@ class AWSOutbound(Loggable):
         AWSService.LAMBDA: "lambda_outbound",
         AWSService.S3: "s3_outbound",
         AWSService.DYNAMO_DB: "dynamodb_outbound",
-        AWSService.SQS: "sqs_outbound"
+        AWSService.SQS: "sqs_outbound",
+        AWSService.SNS: "sns_outbound"
     }
 
     INJECTION_PROXY = {
         AWSService.LAMBDA: "inject_lambda",
-        AWSService.SQS: "inject_sqs"
+        AWSService.SQS: "inject_sqs",
+        AWSService.SNS: "inject_sns"
     }
 
     def __init__(
@@ -550,7 +551,7 @@ class AWSOutbound(Loggable):
         if self.service in self.INJECTION_PROXY:
             getattr(
                 self, self.INJECTION_PROXY[self.service])(data)
-            self.logger.error(
+            self.logger.info(
                 f"[AWS INJECTION]: Payload injected for {self.service}")
         else:
             self.logger.error(
@@ -714,6 +715,41 @@ class AWSOutbound(Loggable):
 
         return contexts
 
+    def sns_outbound(self, tags: dict = {}) -> List[Type[OutboundContext]]:
+        """
+        SNS Contexts
+        """
+        contexts = []
+        _response = self.patch_context.response
+        _topic_arn = self.api_parameters.get("TopicArn")
+        if self.operation == AWSOperation.SNS_PUBLISH_BATCH:
+            for entry in _response.get("Successful", []):
+                _message_id = entry.get("MessageId")
+                contexts.append(OutboundContext(
+                    provider=Provider.AWS,
+                    service=self.service,
+                    operation=self.operation,
+                    trigger_synchronicity=TriggerSynchronicity.ASYNC,
+                    tags=tags,
+                    identifier={
+                        "message_id": _message_id,
+                        "topic_arn": _topic_arn
+                    }))
+        elif self.operation == AWSOperation.SNS_PUBLISH:
+            _message_id = _response.get("MessageId")
+            contexts.append(OutboundContext(
+                provider=Provider.AWS,
+                service=self.service,
+                operation=self.operation,
+                trigger_synchronicity=TriggerSynchronicity.ASYNC,
+                tags=tags,
+                identifier={
+                    "message_id": _message_id,
+                    "topic_arn": _topic_arn
+                }))
+
+        return contexts
+
     """
     AWS Injection
     """
@@ -768,4 +804,20 @@ class AWSOutbound(Loggable):
             _inject_message_entry(self.api_parameters)
         elif self.operation == AWSOperation.SQS_SEND_BATCH:
             for entry in self.api_parameters.get("Entries", []):
+                _inject_message_entry(entry)
+
+    def inject_sns(self, data: dict) -> None:
+        """
+        Injects data to AWS SNS Message Attributes
+        """
+        def _inject_message_entry(message):
+            msg_attr = message.setdefault("MessageAttributes", {})
+            msg_attr[TRACE_CONTEXT_KEY] = {
+                "DataType": "Binary", "BinaryValue": json.dumps(data)}
+
+        if self.operation == AWSOperation.SNS_PUBLISH:
+            _inject_message_entry(self.api_parameters)
+        elif self.operation == AWSOperation.SNS_PUBLISH_BATCH:
+            for entry in self.api_parameters.get(
+                    "PublishBatchRequestEntries", []):
                 _inject_message_entry(entry)
