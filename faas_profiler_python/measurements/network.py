@@ -8,7 +8,7 @@ Module for network measurements:
 
 import psutil
 
-from typing import Set, Type
+from typing import Dict, Set, Type
 
 from faas_profiler_core.models import (
     NetworkConnectionItem,
@@ -27,8 +27,7 @@ class Connections(PeriodicMeasurement):
     ) -> None:
         self.process = None
 
-        self._result = NetworkConnections(
-            connections=[])
+        self._remote_connections: Dict[str, NetworkConnectionItem] = {}
         self._socket_descriptors: Set[int] = set()
 
         try:
@@ -43,22 +42,38 @@ class Connections(PeriodicMeasurement):
         del self.process
 
     def results(self) -> dict:
-        return self._result.dump()
+        return NetworkConnections(
+            connections=list(self._remote_connections.values())).dump()
 
     def _update_connection(self):
         if self.process is None:
             return
 
-        for conn in self.process.connections():
+        for conn in self.process.connections(kind='all'):
             if conn.fd in self._socket_descriptors:
-                return
+                continue
+
+            _remote_address = getattr(conn, "raddr", None)
+            if not _remote_address:
+                continue
+
+            _remote_ip = getattr(_remote_address, "ip", None)
+            _remote_port = getattr(_remote_address, "port", None)
+            if not _remote_ip or not _remote_port:
+                continue
+
+            _remote_full_address = "{ip}:{port}".format(
+                ip=_remote_ip, port=_remote_port)
+
+            conn_item = self._remote_connections.setdefault(
+                _remote_full_address, NetworkConnectionItem(
+                    socket_family=conn.family,
+                    remote_address=_remote_full_address,
+                    number_of_connections=0))
+
+            conn_item.number_of_connections += 1
 
             self._socket_descriptors.add(conn.fd)
-            self._result.connections.append(NetworkConnectionItem(
-                socket_descriptor=int(conn.fd),
-                socket_family=conn.family,
-                local_address=f"{conn.laddr.ip}:{conn.laddr.port}",
-                remote_address=f"{conn.raddr.ip}:{conn.raddr.port}"))
 
 
 class IOCounters(Measurement):
