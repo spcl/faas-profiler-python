@@ -18,6 +18,13 @@ from faas_profiler_python.patchers import (
 )
 from faas_profiler_python.patchers.botocore import BotocoreAPI
 from faas_profiler_python.patchers.requests import SessionSend
+from faas_profiler_python.patchers.google_cloud import (
+    StorageUploadFileMemory,
+    StorageUploadFileName,
+    StorageUploadFile,
+    StorageDeleteFile,
+    InvokeFunction
+)
 from faas_profiler_python.payload import Payload
 from faas_profiler_python.utilis import Loggable
 
@@ -26,8 +33,15 @@ Distributed Tracer
 """
 
 AVAILABLE_OUTBOUND_PATCHERS = {
-    "aws": BotocoreAPI,
-    "requests": SessionSend
+    "aws": [BotocoreAPI],
+    "requests": [SessionSend],
+    "gcp": [
+        StorageUploadFile,
+        StorageUploadFileMemory,
+        StorageUploadFileName,
+        StorageDeleteFile,
+        InvokeFunction
+    ]
 }
 
 
@@ -94,18 +108,20 @@ class DistributedTracer(Loggable):
 
         _trace_outgoing_requests = self.config.trace_outgoing_requests
         if _trace_outgoing_requests == ALL_PATCHERS:
-            for outbound_library in AVAILABLE_OUTBOUND_PATCHERS.values():
-                self._prepare_patcher(outbound_library)
+            for outbound_libraries in AVAILABLE_OUTBOUND_PATCHERS.values():
+                for outbound_library in outbound_libraries:
+                    self._prepare_patcher(outbound_library)
         else:
             for requested_outgoing_lib in _trace_outgoing_requests:
-                outbound_library = AVAILABLE_OUTBOUND_PATCHERS.get(
+                outbound_libraries = AVAILABLE_OUTBOUND_PATCHERS.get(
                     requested_outgoing_lib)
-                if outbound_library is None:
+                if outbound_libraries is None:
                     self.logger.warn(
                         f"[TRACER]: Could not set patcher for {requested_outgoing_lib}. Not available.")
                     continue
 
-                self._prepare_patcher(outbound_library)
+                for outbound_library in outbound_libraries:
+                    self._prepare_patcher(outbound_library)
 
     def stop_tracing_outbound_requests(self):
         """
