@@ -71,6 +71,24 @@ AWS Context Resolving
 
 class AWSEvent(Loggable):
 
+    EVENT_DETECTION = [
+        "lambda_function_url",
+        "cloud_formation_detection",
+        "cloud_front_detection",
+        "cloudwatch_logs_detection",
+        "eventbridge_detection",
+        "dynamodb_detection",
+        "s3_detection",
+        "sns_detection",
+        "sqs_detection",
+        "ses_detection",
+        "aws_config_detection",
+        "code_commit_detection",
+        "gateway_proxy_detection",
+        "gateway_http_detection",
+        "gateway_authorization_detection"
+    ]
+
     def __init__(
         self,
         event_data: dict
@@ -84,95 +102,141 @@ class AWSEvent(Loggable):
         self.data = lowercase_keys(event_data)
         self.service, self.operation = self.resolve_event()
 
-    def resolve_event(self) -> Tuple[AWSService, AWSOperation]:  # noqa: C901
+    def resolve_event(self) -> Tuple[AWSService, AWSOperation]:
         """
         Resolves the service and operation triggering this event.
         """
-        service = AWSService.UNIDENTIFIED
-        operation = AWSService.UNIDENTIFIED
+        _service = AWSService.LAMBDA
+        _operation = AWSOperation.LAMBDA_INVOKE
 
-        if self._is_lambda_function_url():
-            service = AWSService.LAMBDA
-        elif self._is_cloud_front():
-            service = AWSService.CLOUDFRONT
-        elif self._is_dynamodb():
-            service = AWSService.DYNAMO_DB
-            operation = AWSOperation.DYNAMO_DB_UPDATE
-        elif self._is_cloud_formation():
-            service = AWSService.CLOUD_FORMATION
-        elif self._is_sqs():
-            service = AWSService.SQS
-            operation = AWSOperation.SQS_RECEIVE
-        elif self._is_sns():
-            service = AWSService.SNS
-            operation = AWSOperation.SNS_TOPIC_NOTIFICATION
-        elif self._is_ses():
-            service = AWSService.SES
-            operation = AWSOperation.SES_EMAIL_RECEIVE
-        elif self._is_s3():
-            service = AWSService.S3
-            operation = self._get_s3_operation()
-        elif self._is_code_commit():
-            service = AWSService.CODE_COMMIT
-        elif self._is_aws_config():
-            service = AWSService.AWS_CONFIG
-        elif self._is_kinesis_analytics():
-            service = AWSService.KINESIS
-        elif self._is_kinesis_firehose():
-            service = AWSService.KINESIS
-        elif self._is_kinesis_stream():
-            service = AWSService.KINESIS
-        elif self._is_gateway_http():
-            service = AWSService.API_GATEWAY
-            operation = AWSOperation.API_GATEWAY_HTTP
-        elif self._is_gateway_proxy():
-            service = AWSService.API_GATEWAY
-            operation = AWSOperation.API_GATEWAY_AWS_PROXY
-        elif self._is_gateway_authorization():
-            service = AWSService.API_GATEWAY
-            operation = AWSOperation.API_GATEWAY_AUTHORIZER
+        for detector in self.EVENT_DETECTION:
+            result = getattr(self, detector)()
+            if result is not None:
+                _service = get_idx_safely(result, 0, AWSService.LAMBDA)
+                _operation = get_idx_safely(
+                    result, 1, AWSOperation.LAMBDA_INVOKE)
+                break
 
-        return service, operation
+        self.logger.info(
+            f"[AWS INBOUND EVENT]: Detected inbound of service {_service} and operation {_operation}")
+
+        return _service, _operation
 
     def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Returns context about the trigger
         """
-        trigger_ctx = InboundContext(
-            Provider.AWS,
-            self.service,
-            self.operation,
-            {},
-            invoked_at=datetime.now())
+        inbound_context = InboundContext(
+            Provider.AWS, self.service, self.operation)
 
         if self.service == AWSService.S3:
-            self._add_s3_trigger_context(trigger_ctx)
+            self.s3_inbound_context(inbound_context)
         elif self.service == AWSService.DYNAMO_DB:
-            self._add_dynamodb_context(trigger_ctx)
-        elif self.service == AWSService.LAMBDA:
-            self._add_lambda_context()
+            self.dynamodb_context(inbound_context)
+        elif self.service == AWSService.SQS:
+            self.sqs_context(inbound_context)
 
-        return trigger_ctx
+        return inbound_context
 
     def extract_trace_context(self) -> Type[TracingContext]:
         """
         Extracts trace context from event data
         """
-        trace_context = self._payload_tracing_context()
-        if trace_context:
-            return trace_context
+        if "headers" in self.data:
+            _trace_context = self.tracing_context_from_headers()
+            if _trace_context is not None:
+                return _trace_context
 
-        # if "headers" in self.data:
-        #     return self._http_tracing_context()
-        # if self.service == EventTypes.CLOUDWATCH_SCHEDULED_EVENT:
-        #     return self._scheduled_event_context()
+        if self.service == AWSService.LAMBDA:
+            return self.tracing_context_from_payload()
+        elif self.service == AWSService.SQS:
+            return self.tracing_context_from_sqs()
+        elif self.service == AWSService.SNS:
+            return self.tracing_context_from_sns()
+        elif self.service == AWSService.EVENTBRIDGE:
+            return self.tracing_context_from_eventbridge()
 
-        # Default case: Return empty trace context
         return None
 
-    def _payload_tracing_context(self) -> Type[TracingContext]:
+    """
+    AWS Inbound Context Resolving by Event
+    """
+
+    def s3_inbound_context(
+            self,
+            inbound_context: Type[InboundContext]) -> None:
         """
-        Extracts tracing context from payload
+        Creates inbound context for S3
+        """
+        _s3_record = self.first_record
+        _bucket = _s3_record.get("s3", {}).get("bucket")
+        _object = _s3_record.get("s3", {}).get("object")
+
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+        inbound_context.set_tags({
+            "bucket_name": _bucket.get("name"),
+            "bucket_arn": _bucket.get("arn"),
+            "object_key": _object.get("key"),
+            "object_etag": _object.get("eTag")
+        })
+        inbound_context.set_identifiers({
+            "request_id": _s3_record.get("responseelements", {}).get("x-amz-request-id"),
+            "object_key": _object.get("key"),
+            "bucket_name": _bucket.get("name")
+        })
+
+    def dynamodb_context(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Creates inbound context for DynamoDB
+        """
+        _db_record = self.first_record
+        _dynamodb_arn = _db_record.get("eventsourcearn")
+        _table_name = None
+        if _dynamodb_arn:
+            _dynamodb_arn = parse_aws_arn(_dynamodb_arn)
+            if _dynamodb_arn.resource_type == "table":
+                _table_name = str(_dynamodb_arn.resource).split("/")[0]
+
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+        inbound_context.set_tags({
+            "table_name": _table_name,
+        })
+        inbound_context.set_identifiers({
+            "table_name": _table_name,
+        })
+
+    def sqs_context(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Creates inbound context for DynamoDB
+        """
+        _sqs_record = self.first_record
+
+        _queue_url = None
+        try:
+            _event_arn = parse_aws_arn(_sqs_record.get("eventsourcearn", ""))
+            _queue_url = _event_arn.resource
+        except Exception:
+            pass
+
+        _message_id = _sqs_record.get("messageid")
+
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+        inbound_context.set_identifiers({
+            "queue_url": _queue_url,
+            "message_id": _message_id
+        })
+        inbound_context.set_tags({
+            "queue_url": _queue_url,
+            "message_id": _message_id
+        })
+
+    """
+    AWS Tracing Context Resolving by Event
+    """
+
+    def tracing_context_from_payload(self) -> Type[TracingContext]:
+        """
+        Extracts tracing context from payload.
         """
         if TRACE_CONTEXT_KEY in self.data:
             trace_ctx = self.data[TRACE_CONTEXT_KEY]
@@ -183,92 +247,76 @@ class AWSEvent(Loggable):
 
         return None
 
-    def _http_tracing_context(self) -> Type[TracingContext]:
+    def tracing_context_from_headers(self) -> Type[TracingContext]:
         """
-        Extracts the tracing context from http headers.
+        Extracts tracing context from headers.
         """
-        headers = lowercase_keys(self.data.get("headers", {}))
+        headers = self.data.get("headers", {})
         return TracingContext(
             trace_id=headers.get(TRACE_ID_HEADER),
             record_id=headers.get(RECORD_ID_HEADER),
             parent_id=headers.get(PARENT_ID_HEADER))
 
-    def _sns_tracing_context(self) -> Type[TracingContext]:
-        # TODO
+    def tracing_context_from_sqs(self) -> Type[TracingContext]:
+        """
+        Extracts tracing context from SQS message attributes
+        """
+        _sqs_record = self.first_record
+        msg_attr = _sqs_record.get("messageattributes", {})
+        tracing_ctx = msg_attr.get(TRACE_CONTEXT_KEY, {})
+
+        return self._extract_tracing_context_from_msg_attr(tracing_ctx)
+
+    def tracing_context_from_sns(self) -> Type[TracingContext]:
+        """
+        Extracts tracing context from SNS message attributes.
+        """
         pass
 
-    def _sqs_tracing_context(self) -> Type[TracingContext]:
-        # TODO
-        pass
-
-    def _scheduled_event_context(self) -> Type[TracingContext]:
+    def tracing_context_from_eventbridge(self) -> Type[TracingContext]:
         """
-        Extracts the tracing context from detail values.
+        Extracts tracing context from Eventbridge
         """
-        detail = lowercase_keys(self.data.get("detail", {}))
+        detail = self.data.get("detail", {})
         context = detail.get(TRACE_CONTEXT_KEY, {})
         return TracingContext(
             trace_id=context.get(TRACE_CONTEXT_KEY),
             record_id=context.get(RECORD_ID_HEADER),
             parent_id=context.get(PARENT_ID_HEADER))
 
-    def _add_s3_trigger_context(
-            self, trigger_context: Type[InboundContext]) -> None:
-        """
-        Adds S3 specific trigger information.
-        """
-        trigger_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
-        _s3_record = self._get_first_record()
-        _bucket = _s3_record.get("s3", {}).get("bucket")
-        _object = _s3_record.get("s3", {}).get("object")
-
-        trigger_context.set_tags({
-            "bucket_name": _bucket.get("name"),
-            "bucket_arn": _bucket.get("arn"),
-            "object_key": _object.get("key"),
-            "object_etag": _object.get("eTag")
-        })
-
-        trigger_context.set_identifiers({
-            "request_id": _s3_record.get("responseelements", {}).get("x-amz-request-id"),
-            "object_key": _object.get("key"),
-            "bucket_name": _bucket.get("name")
-        })
-
-    def _add_dynamodb_context(
+    def _extract_tracing_context_from_msg_attr(
         self,
-        trigger_context: Type[InboundContext]
-    ) -> None:
+        attribute: dict
+    ) -> Type[TracingContext]:
+        _datatype = attribute.get("dataType")
+        if _datatype == "String":
+            _tracing_string = attribute.get("stringValue", r"{}")
+            _tracing_obj = json.loads(_tracing_string)
+        elif _datatype == "Binary":
+            pass
+
+        return TracingContext(
+            trace_id=_tracing_obj.get(TRACE_ID_HEADER),
+            record_id=_tracing_obj.get(RECORD_ID_HEADER),
+            parent_id=_tracing_obj.get(PARENT_ID_HEADER))
+
+    """
+    AWS Inbound Service and Operation Detection
+    """
+
+    @property
+    def has_records(self) -> bool:
         """
-        Add DynamoDB trigger information
+        Returns True if event has record.
         """
-        trigger_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
-        _db_record = self._get_first_record()
-        _dynamodb_arn = _db_record.get("eventsourcearn")
-        _table_name = None
-        if _dynamodb_arn:
-            _dynamodb_arn = parse_aws_arn(_dynamodb_arn)
-            if _dynamodb_arn.resource_type == "table":
-                _table_name = str(_dynamodb_arn.resource).split("/")[0]
-
-        _items = []
-        for record in self.data.get("records", []):
-            _item = record.get("dynamodb", {}).get("NewImage")
-            if _item:
-                _items.append(_item)
-
-        trigger_context.set_identifiers({
-            "table_name": _table_name,
-            "items": _items
-        })
-
-    # Helpers
-
-    def _has_records(self) -> bool:
         return 'records' in self.data and len(self.data['records']) > 0
 
-    def _get_first_record(self) -> dict:
-        if not self._has_records():
+    @property
+    def first_record(self) -> dict:
+        """
+        Returns first Record if it exists
+        """
+        if not self.has_records:
             return {}
 
         try:
@@ -276,93 +324,122 @@ class AWSEvent(Loggable):
         except (IndexError, KeyError):
             return {}
 
-    def _get_event_source(self) -> str:
-        return self._get_first_record.get('eventsource', None)
+    @property
+    def event_source_of_first_record(self) -> str:
+        """
+        Returns event source of first record.
+        """
+        return self.first_record.get('eventsource', None)
 
-    def _is_lambda_function_url(self) -> bool:
-        # request_context = lowercase_keys(self.data.get("requestcontext", {}))
-        # domain_name = request_context.get("domainname")
+    def lambda_function_url(self) -> tuple:
+        request_context = lowercase_keys(self.data.get("requestcontext", {}))
+        domain_name = str(request_context.get("domainname", ""))
+        try:
+            if domain_name.split(".")[1] == "lambda-url":
+                return (
+                    AWSService.LAMBDA,
+                    AWSOperation.LAMBDA_FUNCTION_URL)
+        except IndexError:
+            pass
 
-        return False
+    def cloud_formation_detection(self) -> tuple:
+        if 'stackid' in self.data and 'requesttype' in self.data and 'resourcetype' in self.data:
+            return (
+                AWSService.CLOUD_FORMATION,
+                AWSOperation.UNIDENTIFIED)
 
-    def _is_cloud_formation(self) -> bool:
-        return 'stackid' in self.data and 'requesttype' in self.data and 'resourcetype' in self.data
+    def cloud_front_detection(self) -> tuple:
+        if 'cf' in self.first_record:
+            return (
+                AWSService.CLOUDFRONT,
+                AWSOperation.UNIDENTIFIED)
 
-    def _is_cloud_front(self) -> bool:
-        return 'cf' in self._get_first_record()
+    def cloudwatch_logs_detection(self) -> tuple:
+        if "data" in self.data.get("awslogs", {}):
+            return (
+                AWSService.CLOUDWATCH,
+                AWSOperation.CLOUDWATCH_LOGS)
 
-    def _is_cloudwatch_logs(self) -> bool:
-        return "data" in self.data.get("awslogs", {})
+    def eventbridge_detection(self) -> tuple:
+        if "detail-type" in self.data and self.data.get(
+                "source") == "aws.events":
+            return (
+                AWSService.EVENTBRIDGE,
+                AWSOperation.EVENTBRIDGE_SCHEDULED_EVENT)
 
-    def _is_cloudwatch_scheduled_event(self) -> bool:
-        return self.data.get("source") == "aws.events"
+    def dynamodb_detection(self) -> tuple:
+        if self.event_source_of_first_record == "aws:dynamodb":
+            return (
+                AWSService.DYNAMO_DB,
+                AWSOperation.DYNAMO_DB_UPDATE)
 
-    def _is_dynamodb(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:dynamodb"
+    def s3_detection(self) -> tuple:
+        if not self.event_source_of_first_record == "aws:s3":
+            return
 
-    def _is_s3(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:s3"
+        operation = AWSService.UNIDENTIFIED
+        _event_name = str(self.first_record.get("eventname", ""))
+        _operation_name = str(_event_name).split(":")[0]
+        if _operation_name == "ObjectCreated":
+            operation = AWSOperation.S3_OBJECT_CREATE
+        elif _operation_name == "ObjectRemoved":
+            operation = AWSOperation.S3_OBJECT_REMOVED
 
-    def _get_s3_operation(self) -> AWSOperation:
-        event_name = self._get_first_record().get("eventname")
-        if event_name is None:
-            return AWSOperation.UNIDENTIFIED
+        return (
+            AWSService.S3,
+            operation)
 
-        _operation = str(event_name).split(":")[0]
-        if _operation == "ObjectCreated":
-            return AWSOperation.S3_OBJECT_CREATE
-        elif _operation == "ObjectRemoved":
-            return AWSOperation.S3_OBJECT_REMOVED
+    def sns_detection(self) -> tuple:
+        if self.event_source_of_first_record == "aws:sns":
+            return (
+                AWSService.SNS,
+                AWSOperation.SNS_TOPIC_NOTIFICATION)
 
-        return AWSOperation.UNIDENTIFIED
+    def sqs_detection(self) -> tuple:
+        if self.event_source_of_first_record == "aws:sqs":
+            return (
+                AWSService.SQS,
+                AWSOperation.SQS_RECEIVE)
 
-    def _is_sns(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:sns"
+    def ses_detection(self) -> tuple:
+        if self.event_source_of_first_record == "aws:ses":
+            return (
+                AWSService.SES,
+                AWSOperation.SES_EMAIL_RECEIVE)
 
-    def _is_sqs(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:sqs"
+    def aws_config_detection(self) -> tuple:
+        if "configruleid" in self.data and "configrulename" in self.data and "configrulearn" in self.data:
+            return (
+                AWSService.AWS_CONFIG,
+                AWSOperation.UNIDENTIFIED)
 
-    def _is_ses(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:ses"
+    def code_commit_detection(self) -> tuple:
+        if self.event_source_of_first_record == "aws:codecommit":
+            return (
+                AWSService.CODE_COMMIT,
+                AWSOperation.UNIDENTIFIED)
 
-    def _is_aws_config(self) -> bool:
-        return "configruleid" in self.data and "configrulename" in self.data and "configrulearn" in self.data
+    def gateway_proxy_detection(self) -> tuple:
+        if "proxy" in self.data.get("pathparameters", {}):
+            return (
+                AWSService.API_GATEWAY,
+                AWSOperation.API_GATEWAY_AWS_PROXY)
 
-    def _is_code_commit(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:codecommit"
+    def gateway_http_detection(self) -> tuple:
+        if self.gateway_proxy_detection():
+            return
 
-    def _is_kinesis_analytics(self) -> bool:
-        if "applicationarn" in self.data:
-            return parse_aws_arn(
-                self.data["applicationarn"]).service == "kinesisanalytics"
+        if "resourceid" in lowercase_keys(self.data.get(
+                "requestcontext", {})):
+            return (
+                AWSService.API_GATEWAY,
+                AWSOperation.API_GATEWAY_HTTP)
 
-        return False
-
-    def _is_kinesis_firehose(self) -> bool:
-        if not self._has_records():
-            return False
-
-        if "approximatearrivaltimestamp" in self._get_first_record():
-            return True
-
-        if "deliverystreamarn" in self.data:
-            delivery_arn = parse_aws_arn(self.data["deliverystreamarn"])
-            return delivery_arn.service == "kinesis"
-
-        return False
-
-    def _is_kinesis_stream(self) -> bool:
-        return self._get_first_record().get("eventsource") == "aws:kinesis"
-
-    def _is_gateway_proxy(self) -> bool:
-        return "proxy" in self.data.get("pathparameters", {})
-
-    def _is_gateway_http(self) -> bool:
-        return "resourceid" in lowercase_keys(self.data.get(
-            "requestcontext", {})) and not self._is_gateway_proxy()
-
-    def _is_gateway_authorization(self) -> bool:
-        return self.data.get("authorizationtoken") == "incoming-client-token"
+    def gateway_authorization_detection(self) -> tuple:
+        if self.data.get("authorizationtoken") == "incoming-client-token":
+            return (
+                AWSService.API_GATEWAY,
+                AWSOperation.API_GATEWAY_AUTHORIZER)
 
 
 class AWSContext(Loggable):
