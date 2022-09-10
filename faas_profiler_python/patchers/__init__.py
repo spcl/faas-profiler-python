@@ -14,7 +14,6 @@ from threading import Lock
 from typing import Any, Callable, List, Set, Type
 from wrapt import wrap_function_wrapper, when_imported
 from dataclasses import dataclass
-from copy import copy
 
 from faas_profiler_core.models import OutboundContext, TracingContext
 
@@ -137,10 +136,18 @@ class FunctionPatcher(BasePlugin, Loggable):
     Interfaces for patcher specific logic
     """
 
-    def extract_outbound_context(
+    def initialize(
         self,
         patch_context: Type[PatchContext]
-    ) -> Type[OutboundContext]:
+    ) -> None:
+        """
+        Setup new patcher context.
+
+        Override this method with the patch specific logic.
+        """
+        pass
+
+    def extract_outbound_context(self) -> Type[OutboundContext]:
         """
         Extracts Outbound Context from patch context.
 
@@ -150,7 +157,6 @@ class FunctionPatcher(BasePlugin, Loggable):
 
     def inject_tracing_context(
         self,
-        patch_context: Type[PatchContext],
         tracing_context: Type[TracingContext]
     ) -> None:
         """
@@ -267,73 +273,72 @@ class FunctionPatcher(BasePlugin, Loggable):
             function_kwargs,
             error=None,
             response=None)
+        self.initialize(patch_context)
 
-        self._modify_payload(patch_context)
+        self._modify_payload()
         response, error, _, invoked_at, finished_at = invoke_instrumented_function(
             function, patch_context.args, patch_context.kwargs)
 
         patch_context.response = response
         patch_context.error = error
 
-        outbound_context = self._execute_extract_outbound_context(
-            patch_context)
-        if outbound_context:
-            outbound_context.invoked_at = invoked_at
-            outbound_context.finished_at = finished_at
+        outbound_contexts = self._execute_extract_outbound_context()
+        if outbound_contexts:
+            for out_ctx in outbound_contexts:
+                out_ctx.invoked_at = invoked_at
+                out_ctx.finished_at = finished_at
 
-            outbound_context.has_error = error is not None
-            outbound_context.error_message = str(error) if error else ""
+                out_ctx.has_error = error is not None
+                out_ctx.error_message = str(error) if error else ""
 
-            self._notify_observers(outbound_context)
+            self._notify_observers(outbound_contexts)
 
         if patch_context.error:
             raise patch_context.error
         else:
             return patch_context.response
 
-    def _notify_observers(self, outbound_context: Type[OutboundContext]):
+    def _notify_observers(self,
+                          outbound_contexts: List[Type[OutboundContext]]):
         """
         Notifies all registered oberservers.
         """
         for oberserver_function in self._registered_observers:
-            try:
-                oberserver_function(outbound_context)
-            except Exception as err:
-                self.logger.error(
-                    f"Notifying {oberserver_function} failed: {err}")
+            if outbound_contexts is None:
+                continue
 
-    def _execute_extract_outbound_context(
-        self,
-        patch_context: Type[PatchContext]
-    ) -> Any:
+            for outbound_context in outbound_contexts:
+                if outbound_context is None:
+                    continue
+                try:
+                    oberserver_function(outbound_context)
+                except Exception as err:
+                    self.logger.error(
+                        f"Notifying {oberserver_function} failed: {err}")
+
+    def _execute_extract_outbound_context(self) -> Any:
         """
         Safely executes the extract context hook
         """
         try:
-            return self.extract_outbound_context(patch_context)
+            return self.extract_outbound_context()
         except Exception as err:
             self.logger.error(
                 f"Execution outbound context extraction for patched function "
                 f"{self.function_name} in module {self._complete_module_name} failed: {err}")
 
-    def _modify_payload(self, patch_context: Type[PatchContext]) -> None:
+    def _modify_payload(self) -> None:
         """
         Calls the tracer to modify the payload if required.
         """
         if not self._tracing_context:
             return
 
-        org_args = copy(patch_context.args)
-        org_kwargs = copy(patch_context.kwargs)
-
         try:
-            self.inject_tracing_context(
-                patch_context, self._tracing_context)
+            self.inject_tracing_context(self._tracing_context)
         except Exception as err:
             self._logger.error(
                 f"Injection failed: {err}. Take unmodified parameters.")
-            patch_context.args = org_args
-            patch_context.kwargs = org_kwargs
 
 
 """

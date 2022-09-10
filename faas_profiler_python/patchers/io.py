@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 
-from typing import Type
+from typing import List, Type
 from datetime import datetime
 
 from faas_profiler_core.models import OutboundContext
@@ -41,18 +41,21 @@ class OpenIO(FunctionPatcher):
     module_name: str = "builtins"
     function_name: str = "open"
 
-    def extract_outbound_context(
-        self,
-        patch_context: Type[PatchContext]
-    ) -> Type[OutboundContext]:
+    def initialize(self, patch_context: Type[PatchContext]) -> None:
+        self.patch_context = patch_context
+
+    def extract_outbound_context(self) -> List[Type[OutboundContext]]:
         """
         Extracts outbound context based for IO open
         """
+        if not self.patch_context:
+            return []
+
         _folder, _filename, _size = None, None, None
         _last_modified_at, _last_accessed_at, _created_at = None, None, None
         _file = get_arg_by_key_or_pos(
-            patch_context.args,
-            patch_context.kwargs,
+            self.patch_context.args,
+            self.patch_context.kwargs,
             0,
             "file")
 
@@ -64,10 +67,10 @@ class OpenIO(FunctionPatcher):
             _last_accessed_at = datetime.fromtimestamp(os.path.getatime(_file))
 
         _in_op, _in_enc = self._extract_from_args(
-            patch_context.args, patch_context.kwargs)
+            self.patch_context.args, self.patch_context.kwargs)
 
         _out_op, _out_enc = self._extract_from_response(
-            patch_context.response)
+            self.patch_context.response)
 
         _operation = _out_op if _out_op else _in_op
         _encoding = _out_enc if _out_enc else _in_enc
@@ -91,7 +94,7 @@ class OpenIO(FunctionPatcher):
             "file": _file
         })
 
-        return outbound_context
+        return [outbound_context]
 
     def _extract_from_args(self, args, kwargs) -> tuple:
         """
