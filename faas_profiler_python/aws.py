@@ -106,15 +106,15 @@ class AWSEvent(Loggable):
         """
         Resolves the service and operation triggering this event.
         """
-        _service = AWSService.LAMBDA
-        _operation = AWSOperation.LAMBDA_INVOKE
+        _service = AWSService.UNIDENTIFIED
+        _operation = AWSOperation.UNIDENTIFIED
 
         for detector in self.EVENT_DETECTION:
             result = getattr(self, detector)()
             if result is not None:
-                _service = get_idx_safely(result, 0, AWSService.LAMBDA)
+                _service = get_idx_safely(result, 0, AWSService.UNIDENTIFIED)
                 _operation = get_idx_safely(
-                    result, 1, AWSOperation.LAMBDA_INVOKE)
+                    result, 1, AWSOperation.UNIDENTIFIED)
                 break
 
         self.logger.info(
@@ -486,7 +486,6 @@ class AWSContext(Loggable):
             provider=Provider.AWS,
             service=AWSService.LAMBDA,
             operation=AWSOperation.LAMBDA_INVOKE,
-            invoked_at=datetime.now(),
             identifier={
                 "function_name": _function_name,
                 "request_id": _request_id})

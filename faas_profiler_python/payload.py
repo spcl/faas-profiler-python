@@ -5,6 +5,7 @@ Module for payload resolving.
 """
 
 from __future__ import annotations
+from datetime import datetime
 
 import logging
 
@@ -110,7 +111,7 @@ class AWSPayload(Payload):
         Tracing context from event is preferred.
         """
         event_ctx = self.event.extract_trace_context()
-        if event_ctx is not None:
+        if event_ctx and event_ctx.trace_id and event_ctx.record_id:
             return event_ctx
 
         return self.context.extract_trace_context()
@@ -119,12 +120,13 @@ class AWSPayload(Payload):
         """
         Returns context about the trigger extracted from the AWS event.
         """
-        event_inbound_context = self.event.extract_inbound_context()
-        if (event_inbound_context.service != AWSService.UNIDENTIFIED and
-                event_inbound_context.operation != AWSOperation.UNIDENTIFIED):
-            return event_inbound_context
+        _event_inbound_context = self.event.extract_inbound_context()
+        if (_event_inbound_context.service == AWSService.UNIDENTIFIED and
+                _event_inbound_context.operation == AWSOperation.UNIDENTIFIED):
+            _event_inbound_context = self.context.extract_inbound_context()
 
-        return self.context.extract_inbound_context()
+        _event_inbound_context.invoked_at = datetime.now()
+        return _event_inbound_context
 
 
 class GCPPayload(Payload):
