@@ -5,82 +5,15 @@ Patcher for AWS botocore.
 """
 
 from __future__ import annotations
-from typing import Type
+from typing import List, Tuple, Type
 
-from faas_profiler_core.constants import AWSService, AWSOperation, Provider, TriggerSynchronicity
+from faas_profiler_core.constants import AWSService, AWSOperation
 from faas_profiler_core.models import OutboundContext, TracingContext
-from faas_profiler_python.config import InjectionError, UnsupportedServiceError
 
 from faas_profiler_python.patchers import FunctionPatcher, PatchContext
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
-from faas_profiler_python.aws import (
-    operation_by_operation_name,
-    service_by_outbound_endpoint,
-    get_outbound_identifiers,
-    inject_aws_call
-)
+from faas_profiler_python.aws import AWSOutbound
 
-
-"""
-AWS Botocore data extraction
-"""
-
-
-def service_prefix(botocore_instance) -> str:
-    """
-    Return the AWS service endpoint prefix
-    """
-    if not hasattr(botocore_instance, "_endpoint"):
-        return None
-
-    return getattr(botocore_instance._endpoint, "_endpoint_prefix", None)
-
-
-"""
-Botocore Request Handlers
-"""
-
-
-def s3_handler(
-    patch_context: Type[PatchContext],
-    outbound_context: Type[OutboundContext]
-) -> None:
-    """
-    Handle S3 request
-    """
-    api_parameters = get_arg_by_key_or_pos(
-        patch_context.args,
-        patch_context.kwargs,
-        pos=1,
-        kw="api_params",
-        default={})
-
-    _body_size, _content_length = None, None
-
-    if patch_context.response:
-        _resp = patch_context.response
-        if "ContentLength" in _resp or "content-length" in _resp:
-            _content_length = _resp.get(
-                "content-length") or _resp.get("ContentLength")
-        elif "ResponseMetadata" in patch_context.response:
-            req_meta_data = _resp["ResponseMetadata"]
-            _content_length = req_meta_data.get(
-                "content-length") or req_meta_data.get("ContentLength")
-
-    if "Body" in api_parameters:
-        _body_size = getattr(api_parameters["Body"], "_size", None)
-
-    if outbound_context.operation == AWSOperation.S3_OBJECT_CREATE:
-        _size = _body_size if _body_size else _content_length
-    else:
-        _size = _content_length if _content_length else _body_size
-
-    outbound_context.set_tags({"size": _size})
-
-
-REQUEST_HANDLERS_BY_SERVICE = {
-    AWSService.S3: s3_handler
-}
 
 """
 Botocore Patcher
@@ -92,115 +25,36 @@ class BotocoreAPI(FunctionPatcher):
     submodules: str = ["client"]
     function_name: str = "BaseClient._make_api_call"
 
-    def extract_outbound_context(
+    def initialize(
         self,
         patch_context: Type[PatchContext]
-    ) -> Type[OutboundContext]:
+    ) -> None:
+        service, operation = aws_service_and_operation_detection(patch_context)
+        self.logger.info(
+            f"[AWS PATCHER]: Detected Service: {service} and operation {operation}")
+
+        self.aws_outbound = AWSOutbound(
+            service, operation, patch_context)
+
+    def extract_outbound_context(self) -> List[Type[OutboundContext]]:
         """
         Extracts outbound context based on AWS API call done with boto3
         """
-        endpoint_prefix = service_prefix(patch_context.instance)
-        service = service_by_outbound_endpoint(endpoint_prefix)
+        if self.aws_outbound:
+            return self.aws_outbound.extract_outbound_contexts()
 
-        outbound_context = OutboundContext(
-            Provider.AWS, service, AWSOperation.UNIDENTIFIED,
-            trigger_synchronicity=TriggerSynchronicity.ASYNC)
-
-        if service != AWSService.UNIDENTIFIED:
-            self.logger.info(
-                f"[OUTBOUND] Detected AWS API call to {service}")
-
-            operation_name = get_arg_by_key_or_pos(
-                patch_context.args, patch_context.kwargs, pos=0, kw="operation_name")
-            operation = operation_by_operation_name(
-                service, str(operation_name).lower())
-            self.logger.info(
-                f"[OUTBOUND] Detected AWS API call operation {operation}")
-
-            outbound_context.operation = operation
-
-            api_parameters = get_arg_by_key_or_pos(
-                patch_context.args,
-                patch_context.kwargs,
-                pos=1,
-                kw="api_params",
-                default={})
-            api_response = patch_context.response if patch_context.response else {}
-
-            meta = getattr(patch_context.instance, "meta", None)
-            http_method, http_uri = self._get_http_info(meta, operation_name)
-
-            _service_handler = REQUEST_HANDLERS_BY_SERVICE.get(service)
-            if _service_handler:
-                _service_handler(patch_context, outbound_context)
-
-            outbound_context.set_tags({
-                "parameters": {
-                    str(k): str(v) for k, v in api_parameters.items()},
-                "request_method": http_method,
-                "request_url": getattr(meta, "endpoint_url"),
-                "request_status": api_response.get("ResponseMetadata", {}).get("HTTPStatusCode"),
-                "request_uri": http_uri})
-            identifiers = get_outbound_identifiers(
-                service, operation, api_parameters=api_parameters, api_response=api_response)
-            self.logger.info(
-                f"[OUTBOUND] Extracted identifiers for AWS API call: {identifiers}")
-
-            outbound_context.set_identifiers(identifiers)
-
-            if service == AWSService.LAMBDA and operation == AWSOperation.LAMBDA_INVOKE:
-                if api_parameters.get(
-                    "InvocationType",
-                        "RequestResponse") == "RequestResponse":
-                    outbound_context.trigger_synchronicity = TriggerSynchronicity.SYNC
-
-        else:
-            self.logger.error(
-                f"[OUTBOUND] Could not detect service for {patch_context}.")
-
-        return outbound_context
+        return []
 
     def inject_tracing_context(
         self,
-        patch_context: Type[PatchContext],
         tracing_context: Type[TracingContext]
     ) -> None:
         """
         Modifies the function arguments to inject a trace context (In place).
         """
-        endpoint_prefix = service_prefix(patch_context.instance)
-        service = service_by_outbound_endpoint(endpoint_prefix)
-        if service != AWSService.UNIDENTIFIED:
-            self.logger.info(
-                f"[INJECTION] Detected AWS API call to {service}")
-
-            operation_name = get_arg_by_key_or_pos(
-                patch_context.args, patch_context.kwargs, pos=0, kw="operation_name")
-            operation_name = str(operation_name).lower()
-            operation = operation_by_operation_name(service, operation_name)
-
-            api_parameters = get_arg_by_key_or_pos(
-                patch_context.args,
-                patch_context.kwargs,
-                pos=1,
-                kw="api_params",
-                default={})
-
-            try:
-                inject_aws_call(
-                    service,
-                    operation,
-                    api_parameters,
-                    tracing_context.to_injectable())
-            except UnsupportedServiceError as err:
-                self.logger.warn(f"[INJECTION] {err}")
-            except InjectionError as err:
-                self.logger.warn(f"[INJECTION] Injection failed: {err}")
-            else:
-                self.logger.info("[INJECTION] Payload injected.")
-        else:
-            self.logger.error(
-                f"[INJECTION] Could not detect service for {patch_context}. Cannot inject.")
+        if self.aws_outbound:
+            return self.aws_outbound.inject_payload(
+                tracing_context.to_injectable())
 
     def _get_http_info(
         self,
@@ -219,3 +73,92 @@ class BotocoreAPI(FunctionPatcher):
                 return None, None
 
         return None, None
+
+
+def aws_service_and_operation_detection(
+    patch_context: Type[PatchContext]
+) -> Tuple[AWSService, AWSOperation]:
+    """
+    Detects AWS Service and Operation
+    """
+    endpoint_prefix = service_prefix(patch_context.instance)
+    service = service_by_outbound_endpoint(endpoint_prefix)
+
+    operation_name = get_arg_by_key_or_pos(
+        patch_context.args, patch_context.kwargs, pos=0, kw="operation_name")
+    operation_name = str(operation_name).lower()
+    operation = operation_by_operation_name(service, operation_name)
+
+    return service, operation
+
+
+def service_prefix(botocore_instance) -> str:
+    """
+    Return the AWS service endpoint prefix
+    """
+    if not hasattr(botocore_instance, "_endpoint"):
+        return None
+
+    return getattr(botocore_instance._endpoint, "_endpoint_prefix", None)
+
+
+"""
+AWS Service detection
+"""
+
+SERVICE_BY_ENDPOINT = {
+    "lambda": AWSService.LAMBDA,
+    "s3": AWSService.S3,
+    "dynamodb": AWSService.DYNAMO_DB,
+    "sqs": AWSService.SQS
+}
+
+
+def service_by_outbound_endpoint(endpoint_prefix: str) -> AWSService:
+    """
+    Returns the AWS Service by service endpoint prefix
+    """
+    return SERVICE_BY_ENDPOINT.get(endpoint_prefix, AWSService.UNIDENTIFIED)
+
+
+"""
+AWS Operation detection
+"""
+
+OPERATION_BY_NAME = {
+    AWSService.LAMBDA: {
+        "invoke": AWSOperation.LAMBDA_INVOKE,
+        "invokeasync": AWSOperation.LAMBDA_INVOKE
+    },
+    AWSService.S3: {
+        "putobject": AWSOperation.S3_OBJECT_CREATE,
+        "getobject": AWSOperation.S3_OBJECT_GET,
+        "deleteobject": AWSOperation.S3_OBJECT_REMOVED,
+        "headobject": AWSOperation.S3_OBJECT_HEAD,
+        "headbucket": AWSOperation.S3_BUCKET_HEAD
+    },
+    AWSService.DYNAMO_DB: {
+        "putitem": AWSOperation.DYNAMO_DB_UPDATE,
+        "removeitem": AWSOperation.DYNAMO_DB_UPDATE,
+        "updateitem": AWSOperation.DYNAMO_DB_UPDATE
+    },
+    AWSService.SQS: {
+        "sendmessage": AWSOperation.SQS_SEND,
+        "sendmessagebatch": AWSOperation.SQS_SEND_BATCH
+    }
+}
+
+
+def operation_by_operation_name(
+    service: AWSService,
+    operation_name: str
+) -> AWSOperation:
+    """
+    Returns the AWS Operation based on service and operation name
+    """
+    service_operations = OPERATION_BY_NAME.get(service)
+    if service_operations:
+        return service_operations.get(
+            operation_name, AWSOperation.UNIDENTIFIED)
+
+    return AWSOperation.UNIDENTIFIED

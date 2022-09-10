@@ -7,9 +7,9 @@ import json
 
 from collections import namedtuple
 from datetime import datetime
-from typing import Any, Tuple, Type
+from typing import Any, List, Tuple, Type
 
-from faas_profiler_core.models import TracingContext, InboundContext
+from faas_profiler_core.models import TracingContext, InboundContext, OutboundContext
 from faas_profiler_core.constants import (
     Provider,
     TRACE_ID_HEADER,
@@ -20,17 +20,16 @@ from faas_profiler_core.constants import (
     AWSOperation,
     AWSService
 )
+from faas_profiler_python.patchers import PatchContext
 
 from faas_profiler_python.utilis import (
     Loggable,
     decode_base64_json_to_dict,
     encode_dict_to_base64_json,
+    get_arg_by_key_or_pos,
     lowercase_keys, get_idx_safely
 )
-from faas_profiler_python.config import (
-    UnsupportedServiceError,
-    InjectionError
-)
+from faas_profiler_python.config import InjectionError
 
 """
 ARN Parsing
@@ -417,222 +416,280 @@ class AWSContext(Loggable):
 
 
 """
-AWS Service detection
+AWS Outbound
 """
 
-SERVICE_BY_ENDPOINT = {
-    "lambda": AWSService.LAMBDA,
-    "s3": AWSService.S3,
-    "dynamodb": AWSService.DYNAMO_DB
-}
 
+class AWSOutbound(Loggable):
 
-def service_by_outbound_endpoint(endpoint_prefix: str) -> AWSService:
-    """
-    Returns the AWS Service by service endpoint prefix
-    """
-    return SERVICE_BY_ENDPOINT.get(endpoint_prefix, AWSService.UNIDENTIFIED)
-
-
-"""
-AWS Operation detection
-"""
-
-OPERATION_BY_NAME = {
-    AWSService.LAMBDA: {
-        "invoke": AWSOperation.LAMBDA_INVOKE
-    },
-    AWSService.S3: {
-        "putobject": AWSOperation.S3_OBJECT_CREATE,
-        "getobject": AWSOperation.S3_OBJECT_GET,
-        "deleteobject": AWSOperation.S3_OBJECT_REMOVED,
-        "headobject": AWSOperation.S3_OBJECT_HEAD,
-        "headbucket": AWSOperation.S3_BUCKET_HEAD
-    },
-    AWSService.DYNAMO_DB: {
-        "putitem": AWSOperation.DYNAMO_DB_UPDATE,
-        "removeitem": AWSOperation.DYNAMO_DB_UPDATE,
-        "updateitem": AWSOperation.DYNAMO_DB_UPDATE
+    OUTBOUND_PROXY = {
+        AWSService.LAMBDA: "lambda_outbound",
+        AWSService.S3: "s3_outbound",
+        AWSService.DYNAMO_DB: "dynamodb_outbound",
+        AWSService.SQS: "sqs_outbound"
     }
-}
 
+    INJECTION_PROXY = {
+        AWSService.LAMBDA: "inject_lambda",
+        AWSService.SQS: "inject_sqs"
+    }
 
-def operation_by_operation_name(
+    def __init__(
+        self,
         service: AWSService,
-        operation_name: str) -> AWSOperation:
-    """
-    Returns the AWS Operation based on service and operation name
-    """
-    service_operations = OPERATION_BY_NAME.get(service)
-    if service_operations:
-        return service_operations.get(
-            operation_name, AWSOperation.UNIDENTIFIED)
+        operation: AWSOperation,
+        patch_context: Type[PatchContext]
+    ) -> None:
+        super().__init__()
 
-    return AWSOperation.UNIDENTIFIED
+        self.service = service
+        self.operation = operation
+        self.patch_context = patch_context
 
+        self.api_parameters = get_arg_by_key_or_pos(
+            patch_context.args,
+            patch_context.kwargs,
+            pos=1,
+            kw="api_params",
+            default={})
 
-"""
-AWS outbound identifier detection
-"""
+    def extract_outbound_contexts(self) -> List[Type[OutboundContext]]:
+        """
+        Extracts all outbound contexts
+        """
+        tags = self._common_tags()
+        print(tags)
+        if self.service in self.OUTBOUND_PROXY:
+            return getattr(
+                self, self.OUTBOUND_PROXY[self.service])(tags)
+        else:
+            self.logger.error(
+                f"[AWS OUTBOUND]: No handler defined for {self.service}")
+            return []
 
+    def inject_payload(self, data: dict) -> None:
+        """
+        Inject Payload
+        """
+        if self.service in self.INJECTION_PROXY:
+            getattr(
+                self, self.INJECTION_PROXY[self.service])(data)
+            self.logger.error(
+                f"[AWS INJECTION]: Payload injected for {self.service}")
+        else:
+            self.logger.error(
+                f"[AWS INJECTION]: No injection handler defined for {self.service}")
 
-def get_outbound_identifiers(
-    service: AWSService,
-    operation: AWSOperation,
-    api_parameters: dict = {},
-    api_response: dict = {}
-) -> dict:
-    """
-    Returns a dict of identifiers for the outbound AWS call.
-    """
-    identifiers = {}
+    def _common_tags(self) -> dict:
+        """
+        Extracts common AWS SDK tags
+        """
+        meta = getattr(self.patch_context.instance, "meta", None)
+        operation_name = get_arg_by_key_or_pos(
+            self.patch_context.args,
+            self.patch_context.kwargs,
+            pos=0,
+            kw="operation_name")
 
-    api_parameters = lowercase_keys(api_parameters)
-    api_response = lowercase_keys(api_response)
-
-    request_id = api_response.get("responsemetadata", {}).get("RequestId")
-
-    service_identifiers_function = None
-    if service == AWSService.S3:
-        if request_id:
-            identifiers["request_id"] = request_id
-        service_identifiers_function = get_outbound_s3_identifiers
-    elif service == AWSService.LAMBDA:
-        if request_id:
-            identifiers["request_id"] = request_id
-        service_identifiers_function = get_outbound_lambda_identifiers
-    elif service == AWSService.DYNAMO_DB:
-        service_identifiers_function = get_dynamodb_identifiers
-
-    if service_identifiers_function:
-        identifiers.update(service_identifiers_function(
-            operation, api_parameters, api_response))
-
-    return identifiers
-
-
-def get_outbound_s3_identifiers(
-    operation: AWSOperation,
-    api_parameters: dict,
-    api_response: dict
-) -> dict:
-    """
-    Extracts outbound s3 identifiers
-    """
-    identifiers = {}
-    _bucket_name = api_parameters.get("bucket")
-    _key = api_parameters.get("key")
-
-    if _bucket_name:
-        identifiers["bucket_name"] = _bucket_name
-    if _key:
-        identifiers["object_key"] = _key
-
-    return identifiers
-
-
-def get_outbound_lambda_identifiers(
-    operation: AWSOperation,
-    api_parameters: dict,
-    api_response: dict
-) -> dict:
-    """
-    Extracts outbound Lambda identifiers
-    """
-    _function_name = api_parameters.get("functionname")
-    if _function_name:
-        return {"function_name": _function_name}
-
-    return {}
-
-
-def get_dynamodb_identifiers(
-    operation: AWSOperation,
-    api_parameters: dict,
-    api_response: dict
-) -> dict:
-    """
-    Extracts outbound DynamoDB identifiers
-    """
-    identifiers = {}
-
-    _table_name = api_parameters.get("tablename")
-    _item = api_parameters.get("item")
-    if _table_name:
-        identifiers["table_name"] = _table_name
-
-    if _item:
-        identifiers["item"] = _item
-
-    return identifiers
-
-
-"""
-AWS Injection
-"""
-
-
-def inject_lambda_call(
-    operation: AWSOperation,
-    api_parameters: dict,
-    injection_data: dict
-):
-    """
-    Injects data to AWS Lambda call
-
-    The Client Context is passed as Base64 object in the api parameters.
-    Thus we need to encode the context (if existing), add our tracing context
-    and then decode in back to Base64
-
-    More info: https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
-    """
-    client_context = {}
-    if "ClientContext" in api_parameters:
         try:
-            client_context = decode_base64_json_to_dict(
-                api_parameters["ClientContext"])
+            op_model = meta.service_model.operation_model(operation_name)
+            _http_method = op_model.http.get("method")
+            _http_uri = op_model.http.get("requestUri")
+        except Exception:
+            _http_method, _http_uri = None, None
+
+        _response = self.patch_context.response
+        _status = None
+        if _response:
+            _status = _response.get(
+                "ResponseMetadata",
+                {}).get("HTTPStatusCode")
+
+        return {
+            "parameters": {
+                str(k): str(v) for k, v in self.api_parameters.items()},
+            "request_method": _http_method,
+            "request_url": getattr(meta, "endpoint_url"),
+            "request_status": _status,
+            "request_uri": _http_uri}
+
+    """
+    AWS Outbound
+    """
+
+    def lambda_outbound(self, tags: dict = {}) -> List[Type[OutboundContext]]:
+        """
+        Lambda Contexts
+        """
+        if self.operation != AWSOperation.LAMBDA_INVOKE:
+            return
+
+        _response = self.patch_context.response
+        _request_id = None
+        if _response and "ResponseMetadata" in _response:
+            _request_id = _response["ResponseMetadata"].get("RequestId")
+
+        _function_name = self.api_parameters.get("FunctionName")
+
+        _trigger_sync = TriggerSynchronicity.SYNC
+        if "InvokeArgs" in self.api_parameters or self.api_parameters.get(
+                "InvocationType") == "Event":
+            _trigger_sync = TriggerSynchronicity.ASYNC
+
+        return [OutboundContext(
+            provider=Provider.AWS,
+            service=self.service,
+            operation=self.operation,
+            trigger_synchronicity=_trigger_sync,
+            tags=tags,
+            identifier={
+                "request_id": _request_id,
+                "function_name": _function_name})]
+
+    def s3_outbound(self, tags: dict = {}) -> List[Type[OutboundContext]]:
+        """
+        S3 Contexts
+        """
+        if (self.operation != AWSOperation.S3_OBJECT_CREATE and
+                self.operation != AWSOperation.S3_OBJECT_REMOVED):
+            return
+
+        _response = self.patch_context.response
+
+        _bucket_name = self.api_parameters.get("Bucket")
+        _key = self.api_parameters.get("Key")
+
+        _request_id = None
+        if _response and "ResponseMetadata" in _response:
+            _request_id = _response["ResponseMetadata"].get("RequestId")
+
+        _body_size, _content_length = None, None
+
+        if _response:
+            if "ContentLength" in _response or "content-length" in _response:
+                _content_length = _response.get(
+                    "content-length") or _response.get("ContentLength")
+            elif "ResponseMetadata" in _response:
+                req_meta_data = _response["ResponseMetadata"]
+                _content_length = req_meta_data.get(
+                    "content-length") or req_meta_data.get("ContentLength")
+
+        if "Body" in self.api_parameters:
+            _body_size = getattr(self.api_parameters["Body"], "_size", None)
+
+        if self.operation == AWSOperation.S3_OBJECT_CREATE:
+            _size = _body_size if _body_size else _content_length
+        else:
+            _size = _content_length if _content_length else _body_size
+
+        return [OutboundContext(
+            provider=Provider.AWS,
+            service=self.service,
+            operation=self.operation,
+            trigger_synchronicity=TriggerSynchronicity.ASYNC,
+            tags={"size": _size, **tags},
+            identifier={
+                "request_id": _request_id,
+                "bucket_name": _bucket_name,
+                "object_key": _key})]
+
+    def dynamodb_outboun(self, tags: dict = {}) -> List[Type[OutboundContext]]:
+        """
+        DynamoDB contexts
+        """
+        return []
+        # json.dumps(self.api_parameters["Item"], sort_keys=True)
+        # sha256 = hashlib.sha256()
+        # sha256.update(foo.encode("utf-8"))
+        # sha256.hexdigest()
+
+    def sqs_outbound(self, tags: dict = {}) -> List[Type[OutboundContext]]:
+        """
+        SQS Contexts
+        """
+        contexts = []
+        _queue_url = self.api_parameters.get("QueueUrl")
+        _response = self.patch_context.response
+        if self.operation == AWSOperation.SQS_SEND_BATCH:
+            for entry in _response.get("Successful", []):
+                _message_id = entry.get("MessageId")
+                contexts.append(OutboundContext(
+                    provider=Provider.AWS,
+                    service=self.service,
+                    operation=self.operation,
+                    trigger_synchronicity=TriggerSynchronicity.ASYNC,
+                    tags=tags,
+                    identifier={
+                        "message_id": _message_id,
+                        "queue_url": _queue_url
+                    }))
+        elif self.operation == AWSOperation.SQS_SEND:
+            _message_id = _response.get("MessageId")
+            contexts.append(OutboundContext(
+                provider=Provider.AWS,
+                service=self.service,
+                operation=self.operation,
+                trigger_synchronicity=TriggerSynchronicity.ASYNC,
+                tags=tags,
+                identifier={
+                    "message_id": _message_id,
+                    "queue_url": _queue_url
+                }))
+
+        return contexts
+
+    """
+    AWS Injection
+    """
+
+    def inject_lambda(self, data: dict):
+        """
+        Injects data to AWS Lambda call
+
+        The Client Context is passed as Base64 object in the api parameters.
+        Thus we need to encode the context (if existing), add our tracing context
+        and then decode in back to Base64
+
+        More info: https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_RequestSyntax
+        """
+        client_context = {}
+        if "ClientContext" in self.api_parameters:
+            try:
+                client_context = decode_base64_json_to_dict(
+                    self.api_parameters["ClientContext"])
+            except ValueError as err:
+                raise InjectionError(
+                    f"Could not decode client context from base64 to json: {err}")
+
+        #     payload = {}
+        #     if "Payload" in api_parameters:
+        #         try:
+        #             payload = json.loads(api_parameters["Payload"].decode('utf-8'))
+        #         except json.JSONDecodeError as err:
+        #             raise InjectionError(
+        #                 f"Could not decode payload to json: {err}")
+
+        # Injection
+        client_context.setdefault("custom", {}).update(data)
+
+        try:
+            self.api_parameters["ClientContext"] = encode_dict_to_base64_json(
+                client_context)
         except ValueError as err:
             raise InjectionError(
-                f"Could not decode client context from base64 to json: {err}")
+                f"Could not encode client context from json to base64: {err}")
 
-    payload = {}
-    if "Payload" in api_parameters:
-        try:
-            payload = json.loads(api_parameters["Payload"].decode('utf-8'))
-        except json.JSONDecodeError as err:
-            raise InjectionError(
-                f"Could not decode payload to json: {err}")
+    def inject_sqs(self, data: dict) -> None:
+        """
+        Injects data to AWS SQS Message Attributes
+        """
+        def _inject_message_entry(message):
+            msg_attr = message.setdefault("MessageAttributes", {})
+            msg_attr[TRACE_CONTEXT_KEY] = {
+                "DataType": "String", "StringValue": json.dumps(data)}
 
-    # Injection
-    client_context.setdefault("custom", {}).update(injection_data)
-    payload[TRACE_CONTEXT_KEY] = injection_data
-
-    try:
-        api_parameters["ClientContext"] = encode_dict_to_base64_json(
-            client_context)
-        api_parameters["Payload"] = json.dumps(payload).encode('utf-8')
-    except ValueError as err:
-        raise InjectionError(
-            f"Could not encode client context from json to base64: {err}")
-
-
-INJECTABLE_SERVICES = {
-    AWSService.LAMBDA: inject_lambda_call
-}
-
-
-def inject_aws_call(
-    service: AWSService,
-    operation: AWSOperation,
-    api_parameters: dict,
-    injection_data: dict,
-) -> None:
-    """
-    Injects data into api parameters
-    """
-    if service not in INJECTABLE_SERVICES:
-        raise UnsupportedServiceError(
-            f"AWS API call {service} does not support injection.")
-
-    INJECTABLE_SERVICES[service](
-        operation, api_parameters, injection_data)
+        if self.operation == AWSOperation.SQS_SEND:
+            _inject_message_entry(self.api_parameters)
+        elif self.operation == AWSOperation.SQS_SEND_BATCH:
+            for entry in self.api_parameters.get("Entries", []):
+                _inject_message_entry(entry)
