@@ -137,6 +137,8 @@ class AWSEvent(Loggable):
             self.sqs_context(inbound_context)
         elif self.service == AWSService.SNS:
             self.sns_context(inbound_context)
+        elif self.service == AWSService.EVENTBRIDGE:
+            self.event_context(inbound_context)
 
         return inbound_context
 
@@ -258,6 +260,21 @@ class AWSEvent(Loggable):
             "message_id": _message_id
         })
 
+    def event_context(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Creates inbound context for Event Bridge
+        """
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+
+        _event_id = self.data.get("id")
+        if _event_id:
+            inbound_context.set_identifiers({
+                "event_id": _event_id
+            })
+            inbound_context.set_tags({
+                "event_id": _event_id
+            })
+
     """
     AWS Tracing Context Resolving by Event
     """
@@ -316,7 +333,7 @@ class AWSEvent(Loggable):
         detail = self.data.get("detail", {})
         context = detail.get(TRACE_CONTEXT_KEY, {})
         return TracingContext(
-            trace_id=context.get(TRACE_CONTEXT_KEY),
+            trace_id=context.get(TRACE_ID_HEADER),
             record_id=context.get(RECORD_ID_HEADER),
             parent_id=context.get(PARENT_ID_HEADER))
 
@@ -401,8 +418,7 @@ class AWSEvent(Loggable):
                 AWSOperation.CLOUDWATCH_LOGS)
 
     def eventbridge_detection(self) -> tuple:
-        if "detail-type" in self.data and self.data.get(
-                "source") == "aws.events":
+        if "detail-type" in self.data:
             return (
                 AWSService.EVENTBRIDGE,
                 AWSOperation.EVENTBRIDGE_SCHEDULED_EVENT)
@@ -543,13 +559,15 @@ class AWSOutbound(Loggable):
         AWSService.S3: "s3_outbound",
         AWSService.DYNAMO_DB: "dynamodb_outbound",
         AWSService.SQS: "sqs_outbound",
-        AWSService.SNS: "sns_outbound"
+        AWSService.SNS: "sns_outbound",
+        AWSService.EVENTBRIDGE: "event_outbound"
     }
 
     INJECTION_PROXY = {
         AWSService.LAMBDA: "inject_lambda",
         AWSService.SQS: "inject_sqs",
-        AWSService.SNS: "inject_sns"
+        AWSService.SNS: "inject_sns",
+        AWSService.EVENTBRIDGE: "inject_event"
     }
 
     def __init__(
@@ -791,6 +809,30 @@ class AWSOutbound(Loggable):
 
         return contexts
 
+    def event_outbound(self, tags: dict = {}) -> List[Type[OutboundContext]]:
+        """
+        Event Bridge Context
+        """
+        contexts = []
+        _response = self.patch_context.response
+
+        for entry in _response.get("Entries"):
+            _event_id = entry.get("EventId")
+            if not _event_id:
+                continue
+
+            contexts.append(OutboundContext(
+                provider=Provider.AWS,
+                service=self.service,
+                operation=self.operation,
+                trigger_synchronicity=TriggerSynchronicity.ASYNC,
+                tags=tags,
+                identifier={
+                    "event_id": _event_id
+                }))
+
+        return contexts
+
     """
     AWS Injection
     """
@@ -862,3 +904,15 @@ class AWSOutbound(Loggable):
             for entry in self.api_parameters.get(
                     "PublishBatchRequestEntries", []):
                 _inject_message_entry(entry)
+
+    def inject_event(self, data: dict) -> None:
+        """
+        Injects data to AWS Event bridge detail
+        """
+        for entry in self.api_parameters.get("Entries", []):
+            _detail = entry.get("Detail", r"{}")
+            _detail_obj = json.loads(_detail)
+
+            _detail_obj[TRACE_CONTEXT_KEY] = data
+
+            entry["Detail"] = json.dumps(_detail_obj)

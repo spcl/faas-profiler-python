@@ -111,7 +111,8 @@ SERVICE_BY_ENDPOINT = {
     "s3": AWSService.S3,
     "dynamodb": AWSService.DYNAMO_DB,
     "sqs": AWSService.SQS,
-    "sns": AWSService.SNS
+    "sns": AWSService.SNS,
+    "events": AWSService.EVENTBRIDGE
 }
 
 
@@ -150,6 +151,9 @@ OPERATION_BY_NAME = {
     AWSService.SNS: {
         "publish": AWSOperation.SNS_PUBLISH,
         "publishbatch": AWSOperation.SNS_PUBLISH_BATCH
+    },
+    AWSService.EVENTBRIDGE: {
+        "putevents": AWSOperation.EVENTBRIDGE_PUT_EVENTS,
     }
 }
 
