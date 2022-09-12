@@ -38,7 +38,7 @@ class S3Access(Capture):
         super().initialize(*args, **kwargs)
 
         self._bucket_names = bucket_names
-        self._captured_buckets = []
+        self._captured_buckets = set()
 
         self._obj_created = {}
         self._obj_deleted = {}
@@ -66,7 +66,7 @@ class S3Access(Capture):
                 "object {_object_key}. Bucket is not of target.")
             return
 
-        self._captured_buckets.append(_bucket_name)
+        self._captured_buckets.add(_bucket_name)
 
         if outbound_context.operation == AWSOperation.S3_OBJECT_GET:
             bkt_obj_get = self._obj_get.setdefault(_bucket_name, {})

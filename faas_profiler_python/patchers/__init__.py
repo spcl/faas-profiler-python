@@ -187,7 +187,7 @@ class FunctionPatcher(BasePlugin, Loggable):
         else:
             self._wrap_function()
 
-    def _wrap_function(self) -> bool:
+    def _wrap_function(self) -> None:
         """
         Wraps the requsted function with the function wrapper.
         Executed with lock.
@@ -201,11 +201,11 @@ class FunctionPatcher(BasePlugin, Loggable):
                 self.logger.info(
                     f"Patchted successfully function {self.function_name} in module {self._complete_module_name}")
 
-                return True
+                self._patched = True
             except Exception as err:
                 self.logger.error(
                     f"Could not patch function {self.function_name} in module {self._complete_module_name}: {err}")
-                return False
+                self._patched = False
 
     def _deinitialize_patch(self) -> bool:
         """

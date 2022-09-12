@@ -27,10 +27,12 @@ from faas_profiler_python.utilis import Loggable
 
 
 def json_formatter(raw_data: dict) -> str:
+    default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
     return json.dumps(
         raw_data,
         ensure_ascii=False,
-        indent=None
+        indent=None,
+        default=default
     ).encode('utf-8')
 
 

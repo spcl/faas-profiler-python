@@ -60,7 +60,6 @@ class DistributedTracer(Loggable):
         self.config: Type[Config] = config
         self.provider: Type[Provider] = provider
 
-        self.payload: Type[Payload] = None
         self._inbound_context: Type[InboundContext] = None
         self._outbound_contexts: List[Type[OutboundContext]] = []
         self._tracing_context: Type[TracingContext] = None
@@ -105,6 +104,7 @@ class DistributedTracer(Loggable):
         if not self.config.tracing_enabled:
             self.logger.warn(
                 "[TRACER]: Do not patch outgoing request. Tracer disabled.")
+            return
 
         _trace_outgoing_requests = self.config.trace_outgoing_requests
         if _trace_outgoing_requests == ALL_PATCHERS:
@@ -147,20 +147,19 @@ class DistributedTracer(Loggable):
 
     def handle_inbound_request(
         self,
-        function: Type[Function]
+        payload: Type[Payload]
     ) -> None:
         """
         Handles the incoming request, which is the current call of the serverless function.
 
         Parameters
         ----------
-        function: namedtuple Function
-            decorated function arguments and keyword arguments
+        payload: Payload
+            serverless Payload representation
         """
-        self.payload = Payload.resolve(self.provider, function)
-        self._inbound_context = self.payload.extract_inbound_context()
+        self._inbound_context = payload.extract_inbound_context()
         self._tracing_context = self._inferre_tracing_context(
-            parent_context=self.payload.extract_tracing_context())
+            parent_context=payload.extract_tracing_context())
 
         self.logger.info(
             f"[TRACER]: New Tracing Context: {self._tracing_context}")

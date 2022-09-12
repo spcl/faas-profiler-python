@@ -77,3 +77,22 @@ class GCPHTTPRequest:
             trace_id=headers.get(TRACE_ID_HEADER),
             record_id=headers.get(RECORD_ID_HEADER),
             parent_id=headers.get(PARENT_ID_HEADER))
+
+
+class GCPEventRequest:
+    """
+    Representation of a GCP Event request
+    """
+
+    def __init__(
+        self,
+        event: dict = {},
+        context = None
+    ) -> None:
+        self.event = event
+        self.context = context
+    
+
+    
+
+

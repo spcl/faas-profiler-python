@@ -21,7 +21,7 @@ from faas_profiler_python.aws import AWSContext, AWSEvent
 from faas_profiler_python.gcp import GCPHTTPRequest
 
 from faas_profiler_python.config import Function
-from faas_profiler_python.utilis import get_arg_by_key_or_pos
+from faas_profiler_python.utilis import combine_list_and_dict, get_arg_by_key_or_pos, get_idx_safely
 
 
 class Payload(ABC):
@@ -65,6 +65,10 @@ class Payload(ABC):
     def extract_inbound_context(self) -> Type[InboundContext]:
         pass
 
+    @abstractmethod
+    def to_exportable(self):
+        pass
+
 
 class UnresolvedPayload(Payload):
     """
@@ -86,6 +90,12 @@ class UnresolvedPayload(Payload):
         Returns a empty trigger context.
         """
         return None
+
+    def to_exportable(self):
+        """
+        Exports all args, kwargs
+        """
+        return combine_list_and_dict(self.args, self.kwargs)
 
 
 class AWSPayload(Payload):
@@ -128,6 +138,20 @@ class AWSPayload(Payload):
         _event_inbound_context.invoked_at = datetime.now()
         return _event_inbound_context
 
+    def to_exportable(self):
+        """
+        Exports all variables
+        """
+        try:
+            _context_dict = vars(self.context_data)
+        except Exception:
+            _context_dict = {}
+        
+        return {
+            "event": self.event_data,
+            "context": _context_dict
+        }
+
 
 class GCPPayload(Payload):
     """
@@ -139,6 +163,17 @@ class GCPPayload(Payload):
         Constructor for GCP Payload
         """
         self.gcp_payload_resolver = None
+
+
+        _request = kwargs.get("request")
+        _event = kwargs.get("event")
+        _context = kwargs.get("context")
+
+
+
+        _first_arg = get_idx_safely(args, 0)
+        # breakpoint()
+
 
         self.request = get_arg_by_key_or_pos(args, kwargs, 0, "request")
         if self.request and isinstance(self.request, Request):
@@ -155,3 +190,6 @@ class GCPPayload(Payload):
         Extracts the inbound context.
         """
         return self.gcp_payload_resolver.extract_inbound_context()
+
+    def to_exportable(self):
+        return {}

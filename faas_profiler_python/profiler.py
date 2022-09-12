@@ -16,6 +16,7 @@ from uuid import uuid4
 from faas_profiler_python.config import Config, MeasuringState, Function
 from faas_profiler_python.function import resolve_function_context
 from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
+from faas_profiler_python.payload import Payload
 from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
 from faas_profiler_python.exporters import Exporter, ResultCollector
@@ -96,6 +97,7 @@ class Profiler(Loggable):
 
         self.function_pid = os.getpid()
         self.function: Type[Function] = None
+        self.payload: Type[Payload] = None
 
         self.periodic_results_path = os.path.join(
             self.config.tmp_result_storage,
@@ -114,7 +116,11 @@ class Profiler(Loggable):
         Profiles the given method and exports the results.
         """
         self.function = Function(func, args, kwargs)
-        self.function_context.arguments = combine_list_and_dict(args, kwargs)
+        self.payload = Payload.resolve(
+            function=self.function,
+            provider=self.function_context.provider)
+
+        self.function_context.arguments = self.payload.to_exportable()
         self.function_context.environment_variables = dict(os.environ)
 
         self.start()
@@ -156,7 +162,7 @@ class Profiler(Loggable):
         """
         self.logger.info("[PROFILER] Profiler run started.")
 
-        self.tracer.handle_inbound_request(self.function)
+        self.tracer.handle_inbound_request(self.payload)
         self.tracer.start_tracing_outbound_requests()
 
         self._start_capturing()
