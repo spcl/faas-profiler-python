@@ -85,12 +85,7 @@ class GCPEventRequest:
     def __init__(
         self,
         event: dict = {},
-        context = None
+        context=None
     ) -> None:
         self.event = event
         self.context = context
-    
-
-
-
-

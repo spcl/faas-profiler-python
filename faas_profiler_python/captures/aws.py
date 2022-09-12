@@ -45,6 +45,7 @@ class S3Access(Capture):
         self._obj_get = {}
         self._obj_head = {}
 
+    # flake8: noqa: C901
     def capture(
         self,
         outbound_context: Type[OutboundContext]

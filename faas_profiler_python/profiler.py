@@ -20,7 +20,7 @@ from faas_profiler_python.payload import Payload
 from faas_profiler_python.tracer import DistributedTracer
 from faas_profiler_python.captures import Capture
 from faas_profiler_python.exporters import Exporter, ResultCollector
-from faas_profiler_python.utilis import Loggable, invoke_instrumented_function, combine_list_and_dict
+from faas_profiler_python.utilis import Loggable, invoke_instrumented_function
 from faas_profiler_python.core import (
     BatchExecution,
     PeriodicProcess,
@@ -75,12 +75,14 @@ class Profiler(Loggable):
         periodic_measurements, default_measurements = split_plugin_list_by_subclass(
             measurements, PeriodicMeasurement)
 
-        self.periodic_batch = BatchExecution(periodic_measurements,
+        self.periodic_batch = BatchExecution(
+            periodic_measurements,
             batch_type=RecordDataType.PERIODIC_MEASUREMENT)
-        self.default_batch = BatchExecution(default_measurements,
+        self.default_batch = BatchExecution(
+            default_measurements,
             batch_type=RecordDataType.SIMPLE_MEASUREMENT)
         self.capture_batch = BatchExecution(captures,
-            batch_type=RecordDataType.CAPTURE)
+                                            batch_type=RecordDataType.CAPTURE)
 
         # Distributed Tracer
         self.tracer = DistributedTracer(

@@ -11,7 +11,7 @@ from uuid import uuid4
 from faas_profiler_core.constants import Provider
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
 
-from faas_profiler_python.config import Config, Function, ALL_PATCHERS
+from faas_profiler_python.config import Config, ALL_PATCHERS
 from faas_profiler_python.patchers import (
     FunctionPatcher,
     request_patcher

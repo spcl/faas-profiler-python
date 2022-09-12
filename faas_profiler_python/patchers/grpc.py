@@ -16,7 +16,7 @@ import multiprocessing
 from wrapt import wrap_function_wrapper
 from typing import Any, Callable, Type
 
-from grpc_interceptor import ClientCallDetails, ClientInterceptor
+from grpc_interceptor import ClientInterceptor
 
 _lock = multiprocessing.Lock()
 
