@@ -12,8 +12,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Type
 
-from flask import Request
-
 from faas_profiler_core.constants import Provider, AWSOperation, AWSService
 from faas_profiler_core.models import TracingContext, InboundContext
 

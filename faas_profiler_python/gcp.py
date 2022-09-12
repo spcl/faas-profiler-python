@@ -3,8 +3,6 @@
 """
 Module for all GCP specific logic.
 """
-import flask
-
 from datetime import datetime
 from typing import Type
 
@@ -26,7 +24,7 @@ class GCPHTTPRequest:
     Representation of a GCP HTTP request
     """
 
-    def __init__(self, request: Type[flask.Request]) -> None:
+    def __init__(self, request) -> None:
         self.request = request
 
     def extract_tracing_context(self) -> Type[TracingContext]:
@@ -93,6 +91,6 @@ class GCPEventRequest:
         self.context = context
     
 
-    
+
 
 
