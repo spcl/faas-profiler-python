@@ -594,7 +594,6 @@ class AWSOutbound(Loggable):
         Extracts all outbound contexts
         """
         tags = self._common_tags()
-        print(tags)
         if self.service in self.OUTBOUND_PROXY:
             return getattr(
                 self, self.OUTBOUND_PROXY[self.service])(tags)

@@ -6,7 +6,6 @@ FaaS-Profiler configuration
 from __future__ import annotations
 
 import logging
-import yaml
 
 from os import environ
 from os.path import exists, abspath, dirname, isabs, join
