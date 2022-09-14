@@ -65,7 +65,7 @@ class Profiler(Loggable):
         self.function_context.invoked_at = datetime.now()
 
         # Load user configuration
-        self.config = Config.load_file(config_file)
+        self.config = Config.initialize(config_file=config_file)
 
         # Load all requested plugins
         captures = Capture.load(self.config.captures)

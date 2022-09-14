@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+import yaml
 
+from os import path
 from typing import Any, Callable
 from datetime import datetime
 from base64 import b64decode, b64encode
@@ -111,6 +113,26 @@ def combine_list_and_dict(
     """
     list_as_dict = {idx: val for idx, val in enumerate(a_list)}
     return {**list_as_dict, **a_dict}
+
+
+def file_exsits_yaml_parseable(filename: str) -> dict:
+    """
+    Returns parsed yaml if it exsits and it is valid.
+    If not, returns None
+    """
+    if filename is None or not path.exists(filename):
+        return None
+
+    try:
+        with open(filename, "r") as fp:
+            config = yaml.safe_load(fp)
+
+        if isinstance(config, dict):
+            return config
+    except (IOError, yaml.YAMLError):
+        pass
+
+    return None
 
 
 class Loggable:

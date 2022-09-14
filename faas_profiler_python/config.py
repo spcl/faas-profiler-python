@@ -8,12 +8,13 @@ from __future__ import annotations
 import logging
 import yaml
 
+from os import environ
 from os.path import exists, abspath, dirname, isabs, join
 from enum import Enum
 from dataclasses import dataclass
 from typing import Any, Dict, List, Type
 from collections import namedtuple
-from faas_profiler_python.utilis import lowercase_keys
+from faas_profiler_python.utilis import get_idx_safely, lowercase_keys, file_exsits_yaml_parseable
 from faas_profiler_core.constants import Provider
 
 """
@@ -63,7 +64,7 @@ class ConfigSyntaxError(SyntaxError):
 
 class Config:
     """
-    Representation of the FaaS-Profiler config file (fp_config.yml)
+    Representation of the FaaS-Profiler config file or env variables
     """
 
     _logger = logging.getLogger("Config")
@@ -82,41 +83,97 @@ class Config:
 
     OUTBOUND_REQUESTS_TABLES_KEY = "outbound_requests_tables"
 
+    MEASUREMENTS_ENV_KEY = "FP_MEASUREMENTS"
+    CAPTURES_ENV_KEY = "FP_CAPTURES"
+    EXPORTERS_ENV_KEY = "FP_EXPORTERS"
+    TRACING_ENV_KEY = "FP_TRACING"
+
+    ENV_PLUGIN_DELIMITER = ","
+    ENV_PARAMETER_DELIMITER = "#"
+    ENV_PARAMETER_NAME_DELIMITER = 2 * ENV_PARAMETER_DELIMITER
+
     @classmethod
-    def load_file(cls, fp_config_file: str) -> Type[Config]:
+    def initialize(
+        cls,
+        config_file: str = None
+    ) -> Type[Config]:
+        """
+        Initializes the config either by config file or env variables.
+        """
+        config_by_file = cls._load_by_file(config_file)
+        if config_by_file is not None:
+            cls._logger.info(f"Loaded configuration of {config_file}")
+            return config_by_file
+
+        config_by_env = cls._load_by_env()
+        if config_by_env is not None:
+            cls._logger.info("Loaded configuration of env variables.")
+            return config_by_env
+
+        return cls()
+
+    @classmethod
+    def _load_by_file(cls, filename: str) -> Type[Config]:
         """
         Load the passed configuration file if it exists and is readable.
         """
-        cls._logger.info(f"Load configuration: {fp_config_file}")
-        # Default config if file does not exists
-        if fp_config_file is None or not exists(fp_config_file):
+        if filename is None:
+            return
+
+        config_by_file = file_exsits_yaml_parseable(filename)
+        if config_by_file is None:
             cls._logger.warn(
-                "No profile configuration file found. Take default configuration")
-            return cls(fp_config_file, config={})
+                f"Could not load config of {filename}. Make sure the file exists and is valid yaml.")
+            return
 
-        try:
-            with open(fp_config_file, "r") as fp:
-                try:
-                    config = yaml.safe_load(fp)
-                except yaml.YAMLError as err:
-                    cls._logger.error(
-                        f"Could not parse profiler config file: {err}")
-                else:
-                    if not isinstance(config, dict):
-                        cls._logger.error(
-                            f"Profiler configuration {fp_config_file} must be a dict, but got {type(config)}")
-                        config = {}
+        return cls(config=config_by_file, config_file=filename)
 
-                    return cls(fp_config_file, config)
-        except IOError as err:
-            cls._logger.error(f"Could not open profiler config file: {err}")
+    @classmethod
+    def _load_by_env(cls) -> Type[Config]:
+        """
+        Loads config by env variables.
+        """
+        def _parse_env_plugins(plugin_str: str) -> list:
+            plugins = []
+            if not plugin_str:
+                return plugins
 
-        return cls(fp_config_file, config={})
+            for pl in str(plugin_str).split(cls.ENV_PLUGIN_DELIMITER):
+                name_params = pl.split(cls.ENV_PARAMETER_NAME_DELIMITER)
+                _name = get_idx_safely(name_params, 0)
+                if not _name:
+                    continue
+
+                _parameters = {}
+                parameter_string = get_idx_safely(name_params, 1, "")
+                para_list = str(parameter_string).split(
+                    cls.ENV_PARAMETER_DELIMITER)
+                for parameter in para_list:
+                    _parameter = str(parameter).split("=")
+                    _key, _value = get_idx_safely(
+                        _parameter, 0), get_idx_safely(
+                        _parameter, 1)
+                    if _key and _value:
+                        _parameters[_key] = _value
+
+                plugins.append({
+                    "name": _name,
+                    "parameters": _parameters
+                })
+
+            return plugins
+
+        return cls(config={
+            "measurements": _parse_env_plugins(environ.get(cls.MEASUREMENTS_ENV_KEY)),
+            "captures": _parse_env_plugins(environ.get(cls.CAPTURES_ENV_KEY)),
+            "exporters": _parse_env_plugins(environ.get(cls.EXPORTERS_ENV_KEY))
+            # "tracing": _parse_env_plugins(environ.get(cls.MEASUREMENTS_ENV_KEY))
+        })
 
     def __init__(
         self,
-        config_file: str = None,
-        config: dict = {}
+        config: dict = {},
+        config_file: str = None
     ) -> None:
         self.config_file = config_file
         self.config = lowercase_keys(config)
