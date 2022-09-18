@@ -199,6 +199,9 @@ class DistributedTracer(Loggable):
         """
         Injects response if possible.
         """
+        if not self.config.inject_response:
+            return response
+
         _response = response
         _is_json = False
         if isinstance(response, str):
@@ -210,11 +213,11 @@ class DistributedTracer(Loggable):
 
         if not isinstance(_response, dict):
             self.logger.warn(
-                "Skip injecting response. Response is not a dict.")
+                "[TRACER]: Skip injecting response. Response is not a dict.")
             return response
 
-        _response = _response[TRACE_CONTEXT_KEY] = self._tracing_context.to_injectable(
-        )
+        _response[TRACE_CONTEXT_KEY] = self._tracing_context.to_injectable()
+        self.logger.info("[TRACER]: Injected function response")
         if _is_json:
             return json.dumps(_response)
         else:
