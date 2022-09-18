@@ -4,11 +4,15 @@
 Distributed tracer module.
 """
 from __future__ import annotations
+import json
 
-from typing import List, Type
+from typing import Any, List, Type
 from uuid import uuid4
 
-from faas_profiler_core.constants import Provider
+from faas_profiler_core.constants import (
+    Provider,
+    TRACE_CONTEXT_KEY
+)
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
 
 from faas_profiler_python.config import Config, ALL_PATCHERS
@@ -187,6 +191,34 @@ class DistributedTracer(Loggable):
 
         self.logger.info(
             f"[TRACER]: Recorded outgoing request: {identifier_string}")
+
+    def handle_function_response(
+        self,
+        response: Any
+    ) -> Any:
+        """
+        Injects response if possible.
+        """
+        _response = response
+        _is_json = False
+        if isinstance(response, str):
+            try:
+                _response = json.loads(response)
+                _is_json = True
+            except Exception:
+                pass
+
+        if not isinstance(_response, dict):
+            self.logger.warn(
+                "Skip injecting response. Response is not a dict.")
+            return response
+
+        _response = _response[TRACE_CONTEXT_KEY] = self._tracing_context.to_injectable(
+        )
+        if _is_json:
+            return json.dumps(_response)
+        else:
+            return _response
 
     """
     Private methods

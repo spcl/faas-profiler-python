@@ -151,9 +151,10 @@ class AWSEvent(Loggable):
             if _trace_context is not None:
                 return _trace_context
 
-        if self.service == AWSService.LAMBDA:
+        if TRACE_CONTEXT_KEY in self.data:
             return self.tracing_context_from_payload()
-        elif self.service == AWSService.SQS:
+
+        if self.service == AWSService.SQS:
             return self.tracing_context_from_sqs()
         elif self.service == AWSService.SNS:
             return self.tracing_context_from_sns()

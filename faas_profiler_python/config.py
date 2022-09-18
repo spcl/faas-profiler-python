@@ -218,6 +218,14 @@ class Config:
         return []
 
     @property
+    def inject_response(self) -> bool:
+        """
+        Returns True if tracer should inject response.
+        Experimental: allows tracing of step functions/workflows until another type is found.
+        """
+        return self._tracing.get("inject_response", False)
+
+    @property
     def outbound_requests_tables(self) -> Dict[Provider, dict]:
         """
         Returns a dict for each configured outbound request table with parameters

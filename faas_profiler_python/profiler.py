@@ -156,7 +156,7 @@ class Profiler(Loggable):
         if error:
             raise error
         else:
-            return response
+            return self.tracer.handle_function_response(response)
 
     def start(self) -> None:
         """

@@ -293,8 +293,8 @@ class FunctionPatcher(BasePlugin, Loggable):
 
             self._notify_observers(outbound_contexts)
 
-        if patch_context.error:
-            raise patch_context.error
+        if error:
+            raise error
         else:
             return patch_context.response
 
