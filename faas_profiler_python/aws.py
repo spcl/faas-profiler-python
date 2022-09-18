@@ -598,7 +598,7 @@ class AWSOutbound(Loggable):
             return getattr(
                 self, self.OUTBOUND_PROXY[self.service])(tags)
         else:
-            self.logger.error(
+            self.logger.warn(
                 f"[AWS OUTBOUND]: No handler defined for {self.service}")
             return []
 
@@ -612,7 +612,7 @@ class AWSOutbound(Loggable):
             self.logger.info(
                 f"[AWS INJECTION]: Payload injected for {self.service}")
         else:
-            self.logger.error(
+            self.logger.warn(
                 f"[AWS INJECTION]: No injection handler defined for {self.service}")
 
     def _common_tags(self) -> dict:
@@ -641,8 +641,8 @@ class AWSOutbound(Loggable):
                 {}).get("HTTPStatusCode")
 
         return {
-            "parameters": {
-                str(k): str(v) for k, v in self.api_parameters.items()},
+            # "parameters": {
+            #     str(k): str(v) for k, v in self.api_parameters.items()},
             "request_method": _http_method,
             "request_url": getattr(meta, "endpoint_url"),
             "request_status": _status,
@@ -698,24 +698,26 @@ class AWSOutbound(Loggable):
         if _response and "ResponseMetadata" in _response:
             _request_id = _response["ResponseMetadata"].get("RequestId")
 
-        _body_size, _content_length = None, None
+        # _body_size, _content_length = None, None
+        # self.logger.info("Extract body...")
+        # if _response:
+        #     if "ContentLength" in _response or "content-length" in _response:
+        #         _content_length = _response.get(
+        #             "content-length") or _response.get("ContentLength")
+        #     elif "ResponseMetadata" in _response:
+        #         req_meta_data = _response["ResponseMetadata"]
+        #         _content_length = req_meta_data.get(
+        #             "content-length") or req_meta_data.get("ContentLength")
 
-        if _response:
-            if "ContentLength" in _response or "content-length" in _response:
-                _content_length = _response.get(
-                    "content-length") or _response.get("ContentLength")
-            elif "ResponseMetadata" in _response:
-                req_meta_data = _response["ResponseMetadata"]
-                _content_length = req_meta_data.get(
-                    "content-length") or req_meta_data.get("ContentLength")
+        # if "Body" in self.api_parameters:
+        #     _body_size = getattr(self.api_parameters["Body"], "_size", None)
 
-        if "Body" in self.api_parameters:
-            _body_size = getattr(self.api_parameters["Body"], "_size", None)
-
-        if self.operation == AWSOperation.S3_OBJECT_CREATE:
-            _size = _body_size if _body_size else _content_length
-        else:
-            _size = _content_length if _content_length else _body_size
+        # if self.operation == AWSOperation.S3_OBJECT_CREATE:
+        #     _size = _body_size if _body_size else _content_length
+        # else:
+        #     _size = _content_length if _content_length else _body_size
+        # self.logger.info("Finished body...")
+        _size = 0
 
         return [OutboundContext(
             provider=Provider.AWS,

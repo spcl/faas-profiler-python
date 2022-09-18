@@ -209,7 +209,7 @@ class PeriodicProcess(Process):
         result_storage_path: str,
         parent_connection: Type[connection.Connection],
         child_connection: Type[connection.Connection],
-        refresh_interval: float = 0.001
+        refresh_interval: float = 0.01
     ) -> None:
         self.parent_connection = parent_connection
         self.child_connection = child_connection
