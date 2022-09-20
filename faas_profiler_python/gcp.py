@@ -3,6 +3,8 @@
 """
 Module for all GCP specific logic.
 """
+import os
+
 from datetime import datetime
 from typing import Tuple, Type
 
@@ -17,11 +19,18 @@ from faas_profiler_core.constants import (
     GCPService,
     GCPOperation
 )
-from faas_profiler_python.utilis import get_idx_safely
+from faas_profiler_python.utilis import Loggable, get_idx_safely
 
 
 class InvalidGCPResource(RuntimeError):
     pass
+
+
+def gcp_project() -> str:
+    """
+    Gets GCP project ID by Env
+    """
+    return os.environ.get("GCLOUD_PROJECT", os.environ.get("GCP_PROJECT "))
 
 
 """
@@ -79,12 +88,13 @@ def queue_name(resource_path: str) -> Tuple[str, str, str]:
     return _project_id, _location, _queue_name, _task_name
 
 
-class GCPHTTPRequest:
+class GCPHTTPRequest(Loggable):
     """
     Representation of a GCP HTTP request
     """
 
     def __init__(self, request) -> None:
+        super().__init__()
         self.request = request
 
     def extract_tracing_context(self) -> Type[TracingContext]:
@@ -137,15 +147,122 @@ class GCPHTTPRequest:
             parent_id=headers.get(PARENT_ID_HEADER))
 
 
-class GCPEventRequest:
+class GCPEventRequest(Loggable):
     """
     Representation of a GCP Event request
     """
+
+    SERVICE_BY_API = {
+        'pubsub.googleapis.com': GCPService.PUB_SUB,
+        'storage.googleapis.com': GCPService.STORAGE,
+        'tasks.googleapis.com': GCPService.STORAGE,
+        'cloudfunctions.googleapis.com': GCPService.FUNCTIONS,
+        "firestore.googleapis.com": GCPService.FIRESTORE,
+        "appengine.googleapis.com": GCPService.APP_ENGINE,
+        "run.googleapis.com": GCPService.CLOUD_RUN
+    }
+
+    EVENTS = {
+        "google.pubsub.topic.publish": (
+            GCPService.PUB_SUB,
+            GCPOperation.PUB_SUB_PUBLISH),
+        "google.storage.object.finalize": (
+            GCPService.STORAGE,
+            GCPOperation.STORAGE_UPLOAD),
+        "google.storage.object.delete": (
+            GCPService.STORAGE,
+            GCPOperation.STORAGE_DELETE),
+    }
 
     def __init__(
         self,
         event: dict = {},
         context=None
     ) -> None:
+        super().__init__()
+
         self.event = event
         self.context = context
+
+        self.service, self.operation = self.resolve_service_operation()
+
+        self.logger.info(
+            f"[GCP INBOUND EVENT]: Detected inbound of service {self.service} and operation {self.operation}")
+
+    def resolve_service_operation(self) -> Tuple[GCPService, GCPOperation]:
+        """
+        Resolve service and operation
+        """
+        event_type = self.context.event_type
+        if event_type in self.EVENTS:
+            service, operation = self.EVENTS[event_type]
+            return service, operation
+
+        resource = self.context.resource
+        service = self.SERVICE_BY_API.get(resource.get("service"))
+        operation = GCPOperation.UNIDENTIFIED
+
+        return service, operation
+
+    def extract_tracing_context(self) -> Type[TracingContext]:
+        """
+        Extract tracing context from GCP Event.
+        """
+        if self.service == GCPService.PUB_SUB:
+            return self.tracing_context_from_pubsub()
+
+        return None
+
+    def extract_inbound_context(self) -> Type[InboundContext]:
+        """
+        Extracts the inbound context from GCP Event.
+        """
+        inbound_context = InboundContext(
+            Provider.GCP, self.service, self.operation)
+
+        if self.service == GCPService.PUB_SUB:
+            self.pubsub_inbound(inbound_context)
+
+        return inbound_context
+
+    """
+    Inbound Context Extraction
+    """
+
+    def pubsub_inbound(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Extract inbound context from pub/sub
+        """
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+
+        _topic, _project_id = None, None
+        if hasattr(self.context, "resource"):
+            _resource_path = self.context.resource
+            if isinstance(_resource_path, dict):
+                _resource_path = _resource_path.get("name")
+
+            _project_id, _topic = pubsub_topic(_resource_path)
+
+        if _project_id is None:
+            _project_id = gcp_project()
+
+        inbound_context.set_identifiers({
+            "project_id": _project_id,
+            "event_id": getattr(self.context, "event_id", None),
+            "topic_name": _topic
+        })
+
+    """
+    Tracing Context Extraction
+    """
+
+    def tracing_context_from_pubsub(self) -> Type[TracingContext]:
+        """
+        Extracts tracing context from message attributes.
+        """
+        _attributes = self.event.get("attributes", {})
+
+        return TracingContext(
+            trace_id=_attributes.get(TRACE_ID_HEADER),
+            record_id=_attributes.get(RECORD_ID_HEADER),
+            parent_id=_attributes.get(PARENT_ID_HEADER))

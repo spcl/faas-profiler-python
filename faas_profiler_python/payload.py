@@ -16,9 +16,10 @@ from faas_profiler_core.constants import Provider, AWSOperation, AWSService
 from faas_profiler_core.models import TracingContext, InboundContext
 
 from faas_profiler_python.aws import AWSContext, AWSEvent
+from faas_profiler_python.gcp import GCPEventRequest, GCPHTTPRequest
 
 from faas_profiler_python.config import Function
-from faas_profiler_python.utilis import combine_list_and_dict
+from faas_profiler_python.utilis import combine_list_and_dict, get_arg_by_key_or_pos
 
 
 class Payload(ABC):
@@ -155,33 +156,53 @@ class GCPPayload(Payload):
     Representation of an incoming GCP Function payload consisting of context and event data.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *foo, **bar) -> None:
         """
         Constructor for GCP Payload
         """
+        # Try to detect signature:
+        # One argument (named request) and of type flask.Request => HTTP Request
+        # Two arguments (named event, context) => Background function
+        # One argument (named cloud_event) and of type Event => Cloud event
+
         self.gcp_payload_resolver = None
 
-        # _request = kwargs.get("request")
-        # _event = kwargs.get("event")
-        # _context = kwargs.get("context")
+        _request = get_arg_by_key_or_pos(foo, bar, 0, "request")
+        _event = get_arg_by_key_or_pos(foo, bar, 0, "event")
+        _context = get_arg_by_key_or_pos(foo, bar, 1, "context")
+        _cloud_event = get_arg_by_key_or_pos(foo, bar, 0, "cloud_event")
 
-        # _first_arg = get_idx_safely(args, 0)
-        # # breakpoint()
-
-        # self.request = get_arg_by_key_or_pos(args, kwargs, 0, "request")
-        # if self.request and isinstance(self.request, Request):
-        #     self.gcp_payload_resolver = GCPHTTPRequest(self.request)
+        if _request.__class__.__name__ == "Request":
+            self._logger.info("Detected GCP HTTP Request")
+            self.gcp_payload_resolver = GCPHTTPRequest(_request)
+        elif isinstance(_event, dict) and _context.__class__.__name__ == "Context":
+            self._logger.info("Detected GCP Event Request")
+            self.gcp_payload_resolver = GCPEventRequest(_event, _context)
+        elif _cloud_event.__class__.__name__ == "CloudEvent":
+            self._logger.info("Detected GCP Cloud Event Request")
+        else:
+            pass
 
     def extract_tracing_context(self) -> Type[TracingContext]:
         """
         Extract tracing context.
         """
+        if not self.gcp_payload_resolver:
+            self._logger.error(
+                "[GCP Inbound Event]: Cannot extract tracing context. No GCP resolver defined.")
+            return None
+
         return self.gcp_payload_resolver.extract_tracing_context()
 
     def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Extracts the inbound context.
         """
+        if not self.gcp_payload_resolver:
+            self._logger.error(
+                "[GCP Inbound Event]: Cannot extract inbound context. No GCP resolver defined.")
+            return None
+
         return self.gcp_payload_resolver.extract_inbound_context()
 
     def to_exportable(self):
