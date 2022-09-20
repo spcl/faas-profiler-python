@@ -7,8 +7,10 @@ Patcher for AWS botocore.
 from __future__ import annotations
 from typing import List, Type
 
-from faas_profiler_core.models import OutboundContext
+from faas_profiler_core.models import OutboundContext, TracingContext
 from faas_profiler_core.constants import Provider, TriggerSynchronicity, GCPService, GCPOperation
+
+from faas_profiler_python.gcp import pubsub_topic, queue_name
 
 from faas_profiler_python.patchers import FunctionPatcher, PatchContext
 from faas_profiler_python.utilis import get_arg_by_key_or_pos, get_idx_safely
@@ -163,3 +165,143 @@ class StorageDeleteFile(FunctionPatcher):
             identifier={
                 "bucket_name": _bucket_name,
                 "object_key": _object_key})]
+
+
+"""
+Pub/Sub Patcher
+"""
+
+
+class PubSubPublish(FunctionPatcher):
+    module_name = "google.cloud"
+    submodules = ["pubsub"]
+    function_name = "PublisherClient.publish"
+
+    def initialize(
+        self,
+        patch_context: Type[PatchContext]
+    ) -> None:
+        self.patch_context = patch_context
+
+    def extract_outbound_context(self) -> List[Type[OutboundContext]]:
+        """
+        Extract outbound contexts of pubsub publish.
+        """
+        if not self.patch_context:
+            return
+
+        _topic_name = get_arg_by_key_or_pos(
+            self.patch_context.args,
+            self.patch_context.kwargs,
+            0,
+            "topic")
+
+        _project_id, _topic = pubsub_topic(_topic_name)
+
+        _event_id = None
+        if self.patch_context.response:
+            try:
+                _event_id = getattr(self.patch_context.response, "result")()
+            except Exception:
+                pass
+
+        return [OutboundContext(
+            provider=Provider.GCP,
+            service=GCPService.PUB_SUB,
+            operation=GCPOperation.PUB_SUB_PUBLISH,
+            trigger_synchronicity=TriggerSynchronicity.ASYNC,
+            identifier={
+                "project_id": _project_id,
+                "event_id": _event_id,
+                "topic_name": _topic})]
+
+    def inject_tracing_context(
+        self,
+        tracing_context: Type[TracingContext]
+    ) -> None:
+        """
+        Injects tracing context to publish attributes
+        """
+        self.patch_context.kwargs.update(tracing_context.to_injectable())
+
+
+"""
+Pub/Sub Patcher
+"""
+
+
+class TasksCreate(FunctionPatcher):
+    module_name = "google.cloud"
+    submodules = ["tasks"]
+    function_name = "CloudTasksClient.create_task"
+
+    def initialize(
+        self,
+        patch_context: Type[PatchContext]
+    ) -> None:
+        self.patch_context = patch_context
+
+    def extract_outbound_context(self) -> List[Type[OutboundContext]]:
+        """
+        Extract outbound contexts of tasks create.
+        """
+        if not self.patch_context:
+            return
+
+        _task_name = None
+        if self.patch_context.response:
+            _task_name = self.patch_context.response.name
+        else:
+            self.logger.warn("Extract task name from arguments")
+
+        _project_id, _location, _queue_name, _task_id = queue_name(_task_name)
+
+        return [OutboundContext(
+            provider=Provider.GCP,
+            service=GCPService.CLOUD_TASKS,
+            operation=GCPOperation.CLOUD_TASKS_CREATE,
+            trigger_synchronicity=TriggerSynchronicity.ASYNC,
+            identifier={
+                "project_id": _project_id,
+                "region": _location,
+                "queue_name": _queue_name,
+                "task_name": _task_id})]
+
+    def inject_tracing_context(
+        self,
+        tracing_context: Type[TracingContext]
+    ) -> None:
+        """
+        Injects tracing context into HTTP Headers of HTTP request.
+        """
+        task = self._find_cloud_task(
+            self.patch_context.args,
+            self.patch_context.kwargs)
+        if task is None:
+            self.logger.error(
+                "[GCP TASKS PATCHER]: Could not find task in payload. Skip injection.")
+            return
+
+        # Inject HTTP Request
+        if hasattr(task, "http_request"):
+            http_request_task = task.http_request
+            http_request_task.headers.update(
+                tracing_context.to_injectable())
+
+    def _find_cloud_task(self, func_args, func_kwargs):
+        """
+        Finds cloud task in arguments
+        """
+        _task = None
+
+        _request = get_arg_by_key_or_pos(
+            self.patch_context.args, self.patch_context.kwargs, 0, "request")
+
+        if _request is not None:
+            _task = getattr(_request, "task", None)
+
+        if _task is None:
+            _task = get_arg_by_key_or_pos(
+                self.patch_context.args, self.patch_context.kwargs, 1, "task")
+
+        return _task

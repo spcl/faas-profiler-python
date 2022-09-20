@@ -10,11 +10,22 @@ import json
 import logging
 import traceback
 import yaml
+import re
 
 from os import path
 from typing import Any, Callable
 from datetime import datetime
 from base64 import b64decode, b64encode
+
+
+URL_REGES = re.compile(
+    r'^(?:http|ftp)s?://'  # http:// or https://
+    # domain...
+    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
+    r'localhost|'  # localhost...
+    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+    r'(?::\d+)?'  # optional port
+    r'(?:/?|[/?]\S+)$', re.IGNORECASE)
 
 
 def invoke_instrumented_function(
@@ -133,6 +144,13 @@ def file_exsits_yaml_parseable(filename: str) -> dict:
         pass
 
     return None
+
+
+def is_url(url: str) -> bool:
+    """
+    Returns True if url is a valid url
+    """
+    return re.match(URL_REGES, url) is not None
 
 
 class Loggable:

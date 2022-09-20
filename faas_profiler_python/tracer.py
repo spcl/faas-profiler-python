@@ -27,7 +27,9 @@ from faas_profiler_python.patchers.google_cloud import (
     StorageUploadFileName,
     StorageUploadFile,
     StorageDeleteFile,
-    InvokeFunction
+    InvokeFunction,
+    PubSubPublish,
+    TasksCreate
 )
 from faas_profiler_python.payload import Payload
 from faas_profiler_python.utilis import Loggable
@@ -44,7 +46,9 @@ AVAILABLE_OUTBOUND_PATCHERS = {
         StorageUploadFileMemory,
         StorageUploadFileName,
         StorageDeleteFile,
-        InvokeFunction
+        InvokeFunction,
+        PubSubPublish,
+        TasksCreate
     ]
 }
 

@@ -4,7 +4,7 @@
 Module for all GCP specific logic.
 """
 from datetime import datetime
-from typing import Type
+from typing import Tuple, Type
 
 from faas_profiler_core.models import InboundContext, TracingContext
 from faas_profiler_core.constants import (
@@ -17,6 +17,66 @@ from faas_profiler_core.constants import (
     GCPService,
     GCPOperation
 )
+from faas_profiler_python.utilis import get_idx_safely
+
+
+class InvalidGCPResource(RuntimeError):
+    pass
+
+
+"""
+GCP Resouce resolving
+"""
+
+
+def pubsub_topic(resource_path: str) -> Tuple[str, str]:
+    """
+    Extracts Project ID and Topic from pub sub topic
+    """
+    _resource_path = str(resource_path)
+    if _resource_path.startswith("//"):
+        _resource_path = _resource_path[2:]
+        if not _resource_path.startswith("pubsub.googleapis.com"):
+            raise InvalidGCPResource(
+                f"{resource_path} is not a valid pubsub topic.")
+
+        _resource_path.replace("pubsub.googleapis.com/", "")
+
+    parts = _resource_path.split("/")
+    _project_id, _topic = None, None
+    if get_idx_safely(parts, 0) == "projects":
+        _project_id = get_idx_safely(parts, 1)
+    if get_idx_safely(parts, 2) == "topics":
+        _topic = get_idx_safely(parts, 3)
+
+    return _project_id, _topic
+
+
+def queue_name(resource_path: str) -> Tuple[str, str, str]:
+    """
+    Extracts Project ID, Queue name, Location Taska Name from task name
+    """
+    _resource_path = str(resource_path)
+    if _resource_path.startswith("//"):
+        _resource_path = _resource_path[2:]
+        if not _resource_path.startswith("cloudtasks.googleapis.com"):
+            raise InvalidGCPResource(
+                f"{resource_path} is not a valid pubsub topic.")
+
+        _resource_path.replace("cloudtasks.googleapis.com/", "")
+
+    parts = _resource_path.split("/")
+    _project_id, _location, _queue_name, _task_name = None, None, None, None
+    if get_idx_safely(parts, 0) == "projects":
+        _project_id = get_idx_safely(parts, 1)
+    if get_idx_safely(parts, 2) == "locations":
+        _location = get_idx_safely(parts, 3)
+    if get_idx_safely(parts, 4) == "queues":
+        _queue_name = get_idx_safely(parts, 5)
+    if get_idx_safely(parts, 6) == "tasks":
+        _task_name = get_idx_safely(parts, 7)
+
+    return _project_id, _location, _queue_name, _task_name
 
 
 class GCPHTTPRequest:

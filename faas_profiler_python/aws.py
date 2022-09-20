@@ -5,8 +5,10 @@ Module for all AWS specific logic.
 """
 import base64
 import json
+import re
 
 from collections import namedtuple
+from urllib.parse import urlparse
 from typing import Any, List, Tuple, Type
 
 from faas_profiler_core.models import TracingContext, InboundContext, OutboundContext
@@ -27,7 +29,9 @@ from faas_profiler_python.utilis import (
     decode_base64_json_to_dict,
     encode_dict_to_base64_json,
     get_arg_by_key_or_pos,
-    lowercase_keys, get_idx_safely
+    lowercase_keys,
+    get_idx_safely,
+    is_url
 )
 from faas_profiler_python.config import InjectionError
 
@@ -35,33 +39,52 @@ from faas_profiler_python.config import InjectionError
 ARN Parsing
 """
 
+# flake8: noqa: E501
+ARN_REGEX = r"^arn:(?P<Partition>[^:\n]*):(?P<Service>[^:\n]*):(?P<Region>[^:\n]*):(?P<AccountID>[^:\n]*):(?P<Ignore>(?P<ResourceType>[^:\/\n]*)[:\/])?(?P<Resource>.*)$"
+
 ARN = namedtuple(
     "ARN",
     "partition service region account_id resource_type resource")
 
 
 def parse_aws_arn(arn: str) -> Type[ARN]:
-    parts = str(arn).split(":")
-    if get_idx_safely(parts, 0) != "arn":
-        raise ValueError(f"ARN {arn} is not a valid arn.")
+    match = re.match(ARN_REGEX, arn)
+    if match is None:
+        return None
 
-    service = get_idx_safely(parts, 2)
-    resource = get_idx_safely(parts, 5)
-    resource_type = None
-
-    if service not in ['s3', 'sns', 'apigateway', 'execute-api']:
-        sep_idx = [resource.find(sep) for sep in [":", "/"] if sep in resource]
-        if sep_idx:
-            resource_type = resource[:min(sep_idx)]
-            resource = resource[min(sep_idx) + 1:]
+    match_groups = match.groups()
 
     return ARN(
-        partition=get_idx_safely(parts, 1),
-        service=service,
-        region=get_idx_safely(parts, 3),
-        account_id=get_idx_safely(parts, 4),
-        resource_type=resource_type,
-        resource=resource)
+        partition=get_idx_safely(match_groups, 0),
+        service=get_idx_safely(match_groups, 1),
+        region=get_idx_safely(match_groups, 2),
+        account_id=get_idx_safely(match_groups, 3),
+        resource_type=get_idx_safely(match_groups, 5),
+        resource=get_idx_safely(match_groups, 6))
+
+
+"""
+AWS URL and ARN
+"""
+
+
+def sqs_resource_name(name: str) -> str:
+    """
+    Resolves the resource from URL or ARN
+    """
+    if is_url(name):
+        parse_result = urlparse(name)
+        if not parse_result.path:
+            return name
+
+        path_parts = str(parse_result.path).split("/")
+        return get_idx_safely(path_parts, 2, name)
+
+    arn = parse_aws_arn(name)
+    if arn:
+        return arn.resource
+
+    return name
 
 
 """
@@ -746,7 +769,7 @@ class AWSOutbound(Loggable):
         SQS Contexts
         """
         contexts = []
-        _queue_url = self.api_parameters.get("QueueUrl")
+        _queue_url = sqs_resource_name(self.api_parameters.get("QueueUrl"))
         _response = self.patch_context.response
         if self.operation == AWSOperation.SQS_SEND_BATCH:
             for entry in _response.get("Successful", []):
