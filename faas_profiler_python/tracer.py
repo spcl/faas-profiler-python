@@ -170,7 +170,10 @@ class DistributedTracer(Loggable):
             parent_context=payload.extract_tracing_context())
 
         self.logger.info(
-            f"[TRACER]: New Tracing Context: {self._tracing_context}")
+            f"[TRACER]: Inbound Context: {self._tracing_context}")
+
+        self.logger.info(
+            f"[TRACER]: Tracing Context: {self._tracing_context}")
 
     def handle_outbound_request(
         self,

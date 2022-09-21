@@ -162,8 +162,11 @@ class GCPEventRequest(Loggable):
         "run.googleapis.com": GCPService.CLOUD_RUN
     }
 
-    EVENTS = {
+    EVENT_TYPES = {
         "google.pubsub.topic.publish": (
+            GCPService.PUB_SUB,
+            GCPOperation.PUB_SUB_PUBLISH),
+        "providers/cloud.pubsub/eventTypes/topic.publish": (
             GCPService.PUB_SUB,
             GCPOperation.PUB_SUB_PUBLISH),
         "google.storage.object.finalize": (
@@ -173,6 +176,12 @@ class GCPEventRequest(Loggable):
             GCPService.STORAGE,
             GCPOperation.STORAGE_DELETE),
     }
+
+    # EVENT_TYPES = {
+    #     "providers/cloud.pubsub/eventTypes/topic.publish": (
+    #         GCPService.PUB_SUB,
+    #         GCPOperation.PUB_SUB_PUBLISH)
+    # }
 
     def __init__(
         self,
@@ -193,14 +202,11 @@ class GCPEventRequest(Loggable):
         """
         Resolve service and operation
         """
-        event_type = self.context.event_type
-        if event_type in self.EVENTS:
-            service, operation = self.EVENTS[event_type]
-            return service, operation
+        service, operation = GCPService.UNIDENTIFIED, GCPOperation.UNIDENTIFIED
 
-        resource = self.context.resource
-        service = self.SERVICE_BY_API.get(resource.get("service"))
-        operation = GCPOperation.UNIDENTIFIED
+        event_type = self.context.event_type
+        if event_type in self.EVENT_TYPES:
+            service, operation = self.EVENT_TYPES[event_type]
 
         return service, operation
 
@@ -237,11 +243,14 @@ class GCPEventRequest(Loggable):
 
         _topic, _project_id = None, None
         if hasattr(self.context, "resource"):
-            _resource_path = self.context.resource
-            if isinstance(_resource_path, dict):
-                _resource_path = _resource_path.get("name")
-
-            _project_id, _topic = pubsub_topic(_resource_path)
+            _resource = self.context.resource
+            if isinstance(_resource, str):
+                _project_id, _topic = pubsub_topic(_resource)
+            elif isinstance(_resource, dict):
+                _project_id, _topic = pubsub_topic(_resource.get("name"))
+            else:
+                self.logger.warn(
+                    f"[GCP Inbound Event] Got resource of type {type(_resource)}. No resolving defined.")
 
         if _project_id is None:
             _project_id = gcp_project()

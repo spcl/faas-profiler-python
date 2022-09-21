@@ -52,7 +52,7 @@ class Payload(ABC):
             return payload_resolver(*function.args, **function.kwargs)
         except Exception as err:
             cls._logger.error(
-                f"[PAYLOAD]: Could parse payload: {err}")
+                f"[PAYLOAD]: Could not parse payload: {err}")
             return UnresolvedPayload(*function.args, **function.kwargs)
 
     @abstractmethod
