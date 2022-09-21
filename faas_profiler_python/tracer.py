@@ -173,7 +173,7 @@ class DistributedTracer(Loggable):
             f"[TRACER]: Inbound Context: {self._tracing_context}")
 
         self.logger.info(
-            f"[TRACER]: Tracing Context: {self._tracing_context}")
+            f"[TRACER]: Tracing Context: {self._inbound_context}")
 
     def handle_outbound_request(
         self,
