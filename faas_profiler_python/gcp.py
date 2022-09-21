@@ -228,6 +228,8 @@ class GCPEventRequest(Loggable):
 
         if self.service == GCPService.PUB_SUB:
             self.pubsub_inbound(inbound_context)
+        elif self.service == GCPService.STORAGE:
+            self.storage_inbound(inbound_context)
 
         return inbound_context
 
@@ -259,6 +261,22 @@ class GCPEventRequest(Loggable):
             "project_id": _project_id,
             "event_id": getattr(self.context, "event_id", None),
             "topic_name": _topic
+        })
+
+    def storage_inbound(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Extract inbound context from Cloud storage
+        """
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+
+        _bucket_name = self.event.get("bucket")
+        _generation = self.event.get("generation")
+        _object_key = self.event.get("name")
+
+        inbound_context.set_identifiers({
+            "bucket_name": _bucket_name,
+            "object_key": _object_key,
+            "generation": _generation
         })
 
     """
