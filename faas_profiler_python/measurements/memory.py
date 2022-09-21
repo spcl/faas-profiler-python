@@ -221,6 +221,8 @@ class Usage(PeriodicMeasurement):
     ) -> None:
         self.include_children = include_children
 
+        self._baseline: int = 0
+
         self._own_process_id = process_pid
         self._function_pid = function_pid
 
@@ -233,13 +235,17 @@ class Usage(PeriodicMeasurement):
             self._logger.warn(f"Could not set process: {err}")
 
     def start(self) -> None:
-        self._result.measuring_points.append(self._get_memory())
+        self._baseline = self._get_memory()
+        self._result.measuring_points.append(self._get_memory(
+            substract_baseline=self._baseline))
 
     def measure(self):
-        self._result.measuring_points.append(self._get_memory())
+        self._result.measuring_points.append(self._get_memory(
+            substract_baseline=self._baseline))
 
     def stop(self) -> None:
-        self._result.measuring_points.append(self._get_memory())
+        self._result.measuring_points.append(self._get_memory(
+            substract_baseline=self._baseline))
 
     def deinitialize(self) -> None:
         del self.process
@@ -247,13 +253,18 @@ class Usage(PeriodicMeasurement):
     def results(self) -> dict:
         return self._result.dump()
 
-    def _get_memory(self):
+    def _get_memory(self, substract_baseline: int = 0) -> int:
+        """
+        Returns memory in bytes for given process (and children if required)
+        """
         try:
-            get_memory(
+            memory = get_memory(
                 self.process,
                 include_children=self.include_children,
                 exclude_child_pids=[
                     self._own_process_id])
+
+            return memory - substract_baseline
         except Exception as e:
             self._logger.error(
                 f"Could not get process memory info from {self.process}: {e}")

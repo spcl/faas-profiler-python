@@ -75,6 +75,8 @@ class Config:
     PLUGIN_FROM_KEY = "from"
     PLUGIN_CFG_KEY = "parameters"
 
+    PROFILER_KEY = "profiler"
+
     MEASUREMENTS_KEY = "measurements"
     CAPTURES_KEY = "captures"
     EXPORTERS_KEY = "exporters"
@@ -183,6 +185,11 @@ class Config:
             self._logger.error(f"Could not resolve dir of config file: {err}")
             self.config_dir = None
 
+        self._profiler_settings = lowercase_keys(
+            self.config.get(self.PROFILER_KEY, {}))
+        self._function_context_settings = lowercase_keys(
+            self._profiler_settings.get("function_context", {}))
+
         self._measurements: List[UnresolvedPlugin] = self._parse_to_plugins(
             self.MEASUREMENTS_KEY)
         self._captures: List[UnresolvedPlugin] = self._parse_to_plugins(
@@ -194,6 +201,45 @@ class Config:
 
         self._outbound_requests_tables = self._parse_outbound_requests_tables(
             self.OUTBOUND_REQUESTS_TABLES_KEY)
+
+    @property
+    def measurement_interval(self) -> float:
+        """
+        Returns the interval of the measurement process in seconds
+        """
+        return float(
+            self._profiler_settings.get(
+                "measurement_interval",
+                0.001))
+
+    @property
+    def include_environment_variables(self) -> bool:
+        """
+        Returns True if environment variables should be included
+        """
+        return self._function_context_settings.get(
+            "environment_variables", False)
+
+    @property
+    def include_response(self) -> bool:
+        """
+        Returns True if response should be included
+        """
+        return self._function_context_settings.get("response", False)
+
+    @property
+    def include_payload(self) -> bool:
+        """
+        Returns True if payload should be included
+        """
+        return self._function_context_settings.get("payload", False)
+
+    @property
+    def include_traceback(self) -> bool:
+        """
+        Returns True if traceback should be included
+        """
+        return self._function_context_settings.get("traceback", False)
 
     @property
     def tracing_enabled(self) -> bool:

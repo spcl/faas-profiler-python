@@ -122,8 +122,11 @@ class Profiler(Loggable):
             function=self.function,
             provider=self.function_context.provider)
 
-        self.function_context.arguments = self.payload.to_exportable()
-        self.function_context.environment_variables = dict(os.environ)
+        if self.config.include_payload:
+            self.function_context.arguments = self.payload.to_exportable()
+
+        if self.config.include_environment_variables:
+            self.function_context.environment_variables = dict(os.environ)
 
         self.start()
 
@@ -139,14 +142,18 @@ class Profiler(Loggable):
             self.function_context.has_error = True
             self.function_context.error_type = error.__class__.__name__
             self.function_context.error_message = str(error)
-            self.function_context.traceback = traceback_list
             self.function_context.response = None
+
+            if self.config.include_traceback:
+                self.function_context.traceback = traceback_list
         else:
             self.function_context.has_error = False
             self.function_context.error_type = None
             self.function_context.error_message = None
             self.function_context.traceback = []
-            self.function_context.response = response
+
+            if self.config.include_response:
+                self.function_context.response = response
 
         self.stop()
         self.export()
@@ -251,7 +258,8 @@ class Profiler(Loggable):
             function_pid=self.function_pid,
             result_storage_path=self.periodic_results_path,
             child_connection=self.child_endpoint,
-            parent_connection=self.parent_endpoint)
+            parent_connection=self.parent_endpoint,
+            refresh_interval=self.config.measurement_interval)
 
         self.logger.info(
             f"[PERIODIC MEASUREMENT]: Starting process: {self.periodic_process}")
