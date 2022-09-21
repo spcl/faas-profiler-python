@@ -154,7 +154,7 @@ class GCPHTTPRequest(Loggable):
         """
         Extracts tracing context from payload.
         """
-        payload = self.request.get_json()
+        payload = self.request.values
         if not payload or TRACE_CONTEXT_KEY not in payload:
             return
 
