@@ -5,7 +5,6 @@ Module for all GCP specific logic.
 """
 import os
 
-from datetime import datetime
 from typing import Tuple, Type
 
 from faas_profiler_core.models import InboundContext, TracingContext
@@ -93,45 +92,77 @@ class GCPHTTPRequest(Loggable):
     Representation of a GCP HTTP request
     """
 
+    CLOUD_TASK_NAME_HEADER = "X-Cloudtasks-Taskname"
+    CLOUD_QUEUE_NAME_HEADER = "X-Cloudtasks-Queuename"
+
     def __init__(self, request) -> None:
         super().__init__()
         self.request = request
+
+        self.service, self.operation = self.resolve_service_operation()
+
+        self.logger.info(
+            f"[GCP INBOUND HTTP]: Detected inbound of service {self.service} and operation {self.operation}")
+
+    @property
+    def has_headers(self) -> bool:
+        """
+        Returns True if request has headers
+        """
+        return self.request.headers is not None
+
+    def resolve_service_operation(self) -> Tuple[GCPService, GCPOperation]:
+        """
+        Resolve service and operation
+        """
+        service, operation = GCPService.FUNCTIONS, GCPOperation.FUNCTIONS_INVOKE
+
+        if self.has_headers:
+            if (self.CLOUD_QUEUE_NAME_HEADER in self.request.headers and
+                    self.CLOUD_TASK_NAME_HEADER in self.request.headers):
+                service = GCPService.CLOUD_TASKS
+                operation = GCPOperation.CLOUD_TASK_RECEIVCE
+
+        return service, operation
 
     def extract_tracing_context(self) -> Type[TracingContext]:
         """
         Extracts the tracing context from HTTP request.
         """
-        payload_tracing_context = self._payload_tracing_context()
-        if payload_tracing_context:
-            return payload_tracing_context
-
         header_tracing_context = self._headers_tracing_context()
-        return header_tracing_context
+        if header_tracing_context:
+            return header_tracing_context
+
+        payload_tracing_context = self._payload_tracing_context()
+        return payload_tracing_context
 
     def extract_inbound_context(self) -> Type[InboundContext]:
         """
         Extracts inbound context of HTTP flask request.
         """
-        return InboundContext(
-            provider=Provider.GCP,
-            service=GCPService.FUNCTIONS,
-            operation=GCPOperation.FUNCTIONS_INVOKE,
-            trigger_synchronicity=TriggerSynchronicity.SYNC,
-            invoked_at=datetime.now())
+        inbound_context = InboundContext(
+            Provider.GCP, self.service, self.operation)
+
+        if self.service == GCPService.FUNCTIONS:
+            self.functions_inbound(inbound_context)
+        elif self.service == GCPService.CLOUD_TASKS:
+            self.tasks_inbound(inbound_context)
+
+        return inbound_context
 
     def _payload_tracing_context(self) -> Type[TracingContext]:
         """
         Extracts tracing context from payload.
         """
-        if not self.request.values:
+        payload = self.request.get_json()
+        if not payload or TRACE_CONTEXT_KEY not in payload:
             return
 
-        trace_ctx = self.request.values.get(TRACE_CONTEXT_KEY)
-        if trace_ctx:
-            return TracingContext(
-                trace_id=trace_ctx.get(TRACE_ID_HEADER),
-                record_id=trace_ctx.get(RECORD_ID_HEADER),
-                parent_id=trace_ctx.get(PARENT_ID_HEADER))
+        trace_ctx = payload[TRACE_CONTEXT_KEY]
+        return TracingContext(
+            trace_id=trace_ctx.get(TRACE_ID_HEADER),
+            record_id=trace_ctx.get(RECORD_ID_HEADER),
+            parent_id=trace_ctx.get(PARENT_ID_HEADER))
 
     def _headers_tracing_context(self) -> Type[TracingContext]:
         """
@@ -141,10 +172,37 @@ class GCPHTTPRequest(Loggable):
             return
 
         headers = self.request.headers
-        return TracingContext(
-            trace_id=headers.get(TRACE_ID_HEADER),
-            record_id=headers.get(RECORD_ID_HEADER),
-            parent_id=headers.get(PARENT_ID_HEADER))
+        if TRACE_ID_HEADER in headers and RECORD_ID_HEADER in headers:
+            return TracingContext(
+                trace_id=headers.get(TRACE_ID_HEADER),
+                record_id=headers.get(RECORD_ID_HEADER),
+                parent_id=headers.get(PARENT_ID_HEADER))
+
+        return None
+
+    def functions_inbound(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Extract inbound context from Cloud Functions
+        """
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.SYNC
+
+        inbound_context.set_identifiers({
+            "request_id": self.request.headers.get("Function-Execution-Id"),
+            "function_name": os.environ.get("K_SERVICE")
+        })
+
+    def tasks_inbound(self, inbound_context: Type[InboundContext]) -> None:
+        """
+        Extract inbound context from Cloud Tasks
+        """
+        inbound_context.trigger_synchronicity = TriggerSynchronicity.ASYNC
+
+        inbound_context.set_identifiers({
+            "project_id": gcp_project(),
+            "region": os.environ.get("FUNCTION_REGION"),
+            "queue_name": self.request.headers.get(self.CLOUD_QUEUE_NAME_HEADER),
+            "task_name": self.request.headers.get(self.CLOUD_TASK_NAME_HEADER)
+        })
 
 
 class GCPEventRequest(Loggable):
