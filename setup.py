@@ -11,7 +11,7 @@ with open("requirements.txt", "r") as fh:
 
 setuptools.setup(
     name='faas_profiler_python',
-    version='1.2.3',
+    version='1.2.4',
     url='https://github.com/spcl/faas-profiler-python',
     packages=setuptools.find_packages(),
     include_package_data=True,
