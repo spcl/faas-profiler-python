@@ -12,6 +12,7 @@ import sys
 import os
 import linecache
 import inspect
+import time
 
 from faas_profiler_python.measurements import PeriodicMeasurement, Measurement
 from faas_profiler_core.models import (
@@ -236,16 +237,16 @@ class Usage(PeriodicMeasurement):
 
     def start(self) -> None:
         self._baseline = self._get_memory()
-        self._result.measuring_points.append(self._get_memory(
-            substract_baseline=self._baseline))
+        self._result.measuring_points.append(
+            (time.time(), self._get_memory(substract_baseline=self._baseline)))
 
     def measure(self):
-        self._result.measuring_points.append(self._get_memory(
-            substract_baseline=self._baseline))
+        self._result.measuring_points.append(
+            (time.time(), self._get_memory(substract_baseline=self._baseline)))
 
     def stop(self) -> None:
-        self._result.measuring_points.append(self._get_memory(
-            substract_baseline=self._baseline))
+        self._result.measuring_points.append(
+            (time.time(), self._get_memory(substract_baseline=self._baseline)))
 
     def deinitialize(self) -> None:
         del self.process
