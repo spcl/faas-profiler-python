@@ -4,9 +4,7 @@
 Common exporters
 """
 
-from typing import Type
-
-from faas_profiler_python.exporters import Exporter, ResultCollector
+from faas_profiler_python.exporters import Exporter
 
 
 class Console(Exporter):
@@ -14,11 +12,11 @@ class Console(Exporter):
     Prints results to console
     """
 
-    def export(self, results_collector: Type[ResultCollector]):
+    def export(self, trace_record: dict):
         """
         Prints raw data to std out.
         """
-        print(results_collector.raw_data)
+        print(trace_record)
 
 
 class AWSVisualizerUploader(Exporter):
@@ -36,11 +34,11 @@ class AWSVisualizerUploader(Exporter):
             bucket_name=bucket_name,
             region_name=region_name)
 
-    def export(self, results_collector: Type[ResultCollector]):
+    def export(self, trace_record: dict) -> None:
         """
         Uploads record as json to bucket.
         """
-        self.record_storage.store_unprocessed_record(results_collector.record)
+        self.record_storage.store_unprocessed_record(trace_record)
 
 
 class GCPVisualizerUploader(Exporter):
@@ -60,8 +58,8 @@ class GCPVisualizerUploader(Exporter):
             bucket_name=bucket_name,
             region_name=region_name)
 
-    def export(self, results_collector: Type[ResultCollector]):
+    def export(self, trace_record: dict) -> None:
         """
         Uploads record as json to bucket.
         """
-        self.record_storage.store_unprocessed_record(results_collector.record)
+        self.record_storage.store_unprocessed_record(trace_record)
