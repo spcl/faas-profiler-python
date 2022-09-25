@@ -211,6 +211,9 @@ class LineUsage(Measurement):
 
 
 class Usage(PeriodicMeasurement):
+    """
+    Memory consumption of the process over time.
+    """
 
     def initialize(
         self,
@@ -250,6 +253,7 @@ class Usage(PeriodicMeasurement):
 
     def deinitialize(self) -> None:
         del self.process
+        del self._result
 
     def results(self) -> dict:
         return self._result.dump()
