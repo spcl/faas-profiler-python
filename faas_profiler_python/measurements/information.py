@@ -7,11 +7,7 @@ Module for information extraction:
 """
 
 import sys
-import platform
 import os
-import pkg_resources
-import psutil
-import ntplib
 
 from datetime import datetime
 
@@ -25,8 +21,12 @@ from faas_profiler_core.models import (
 
 
 class Environment(Measurement):
+    """
+    Returns environment information.
+    """
 
     def results(self) -> dict:
+        import platform
         return InformationEnvironment(
             runtime_name="python",
             runtime_version=sys.version,
@@ -39,6 +39,7 @@ class Environment(Measurement):
         ).dump()
 
     def _installed_packages(self) -> list:
+        import pkg_resources
         try:
             installed_packages = pkg_resources.working_set
             return sorted(["%s==%s" % (i.key, i.version)
@@ -49,8 +50,12 @@ class Environment(Measurement):
 
 
 class OperatingSystem(Measurement):
+    """
+    Returns operating system information.
+    """
 
     def results(self) -> dict:
+        import psutil
         uname = os.uname()
         return InformationOperatingSystem(
             boot_time=datetime.fromtimestamp(psutil.boot_time()),
@@ -62,6 +67,9 @@ class OperatingSystem(Measurement):
 
 
 class IsWarm(Measurement):
+    """
+    Returns information if the container is warm
+    """
 
     WARM_IDENT_FILE = os.path.join(os.path.abspath("/tmp"), "is-warm.txt")
 
@@ -126,8 +134,13 @@ class IsWarm(Measurement):
 
 
 class TimeShift(Measurement):
+    """
+    Returns information about the time shift
+    """
 
     def initialize(self, server: str = "pool.ntp.org", **kwargs) -> None:
+        import ntplib
+
         self.client = ntplib.NTPClient()
         self.server = server
 
