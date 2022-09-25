@@ -5,6 +5,7 @@ Module for cpu measurements
 """
 
 import psutil
+import time
 
 from faas_profiler_python.measurements import PeriodicMeasurement
 from faas_profiler_core.models import CPUUsage
@@ -32,13 +33,16 @@ class Usage(PeriodicMeasurement):
             self.logger.warn(f"Could not set process: {err}")
 
     def start(self) -> None:
-        self._result.measuring_points.append(self._get_cpu_percentage())
+        self._result.measuring_points.append(
+            (time.time(), self._get_cpu_percentage()))
 
     def measure(self):
-        self._result.measuring_points.append(self._get_cpu_percentage())
+        self._result.measuring_points.append(
+            (time.time(), self._get_cpu_percentage()))
 
     def stop(self) -> None:
-        self._result.measuring_points.append(self._get_cpu_percentage())
+        self._result.measuring_points.append(
+            (time.time(), self._get_cpu_percentage()))
 
     def deinitialize(self) -> None:
         del self.process
