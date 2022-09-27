@@ -6,7 +6,7 @@ Distributed tracer module.
 from __future__ import annotations
 import json
 
-from typing import Any, List, Type
+from typing import TYPE_CHECKING, Any, List, Type
 from uuid import uuid4
 
 from faas_profiler_core.constants import (
@@ -14,43 +14,50 @@ from faas_profiler_core.constants import (
     TRACE_CONTEXT_KEY
 )
 from faas_profiler_core.models import InboundContext, OutboundContext, TracingContext
+from faas_profiler_core.constants import AWSOperation, GCPOperation
 
 from faas_profiler_python.config import Config, ALL_PATCHERS
-from faas_profiler_python.patchers import (
-    FunctionPatcher,
-    request_patcher
-)
-from faas_profiler_python.patchers.botocore import BotocoreAPI
-from faas_profiler_python.patchers.requests import SessionSend
-from faas_profiler_python.patchers.google_cloud import (
-    StorageUploadFileMemory,
-    StorageUploadFileName,
-    StorageUploadFile,
-    StorageDeleteFile,
-    InvokeFunction,
-    PubSubPublish,
-    TasksCreate
-)
+from faas_profiler_python.patchers import FunctionPatcher
 from faas_profiler_python.payload import Payload
 from faas_profiler_python.utilis import Loggable
+
+if TYPE_CHECKING:
+    from faas_profiler_python.profiler import Profiler
 
 """
 Distributed Tracer
 """
 
 AVAILABLE_OUTBOUND_PATCHERS = {
-    "aws": [BotocoreAPI],
-    "requests": [SessionSend],
-    "gcp": [
-        StorageUploadFile,
-        StorageUploadFileMemory,
-        StorageUploadFileName,
-        StorageDeleteFile,
-        InvokeFunction,
-        PubSubPublish,
-        TasksCreate
-    ]
+    "aws": ["botocore"],
+    # "requests": [SessionSend],
+    # "gcp": [
+    #     StorageUploadFile,
+    #     StorageUploadFileMemory,
+    #     StorageUploadFileName,
+    #     StorageDeleteFile,
+    #     InvokeFunction,
+    #     PubSubPublish,
+    #     TasksCreate
+    # ]
 }
+
+OUTGOING_OPERATIONS = [
+    AWSOperation.S3_OBJECT_CREATE,
+    AWSOperation.S3_OBJECT_REMOVED,
+    AWSOperation.LAMBDA_INVOKE,
+    AWSOperation.DYNAMO_DB_UPDATE,
+    AWSOperation.SQS_SEND,
+    AWSOperation.SQS_SEND_BATCH,
+    AWSOperation.SNS_PUBLISH,
+    AWSOperation.SNS_PUBLISH_BATCH,
+    AWSOperation.EVENTBRIDGE_PUT_EVENTS,
+    GCPOperation.FUNCTIONS_INVOKE,
+    GCPOperation.STORAGE_UPLOAD,
+    GCPOperation.STORAGE_DELETE,
+    GCPOperation.PUB_SUB_PUBLISH,
+    GCPOperation.CLOUD_TASKS_CREATE
+]
 
 
 class DistributedTracer(Loggable):
@@ -60,10 +67,12 @@ class DistributedTracer(Loggable):
 
     def __init__(
         self,
+        profiler: Type[Profiler],
         config: Type[Config],
         provider: Type[Provider] = Provider.UNIDENTIFIED
     ) -> None:
         super().__init__()
+        self.profiler = profiler
 
         self.config: Type[Config] = config
         self.provider: Type[Provider] = provider
@@ -101,6 +110,21 @@ class DistributedTracer(Loggable):
         """
         return self._tracing_context
 
+    def dump_contexts(self) -> dict:
+        """
+        Dumps all tracer contexts.
+        """
+        ctx = {}
+        if self.inbound_context:
+            ctx["inbound_context"] = self.inbound_context.dump()
+        if self.outbound_contexts:
+            ctx["outbound_contexts"] = [
+                out_ctx.dump() for out_ctx in self.outbound_contexts]
+        if self.tracing_context:
+            ctx["tracing_context"] = self.tracing_context.dump()
+
+        return ctx
+
     """
     Tracing methods
     """
@@ -110,17 +134,16 @@ class DistributedTracer(Loggable):
         Starts tracing outgoing requests by patching the libraries that make these requests.
         """
         if not self.config.tracing_enabled:
-            self.logger.warn(
+            self.logger.info(
                 "[TRACER]: Do not patch outgoing request. Tracer disabled.")
             return
 
-        _trace_outgoing_requests = self.config.trace_outgoing_requests
-        if _trace_outgoing_requests == ALL_PATCHERS:
+        if self.config.trace_outgoing_requests == ALL_PATCHERS:
             for outbound_libraries in AVAILABLE_OUTBOUND_PATCHERS.values():
                 for outbound_library in outbound_libraries:
                     self._prepare_patcher(outbound_library)
         else:
-            for requested_outgoing_lib in _trace_outgoing_requests:
+            for requested_outgoing_lib in self.config.trace_outgoing_requests:
                 outbound_libraries = AVAILABLE_OUTBOUND_PATCHERS.get(
                     requested_outgoing_lib)
                 if outbound_libraries is None:
@@ -142,9 +165,9 @@ class DistributedTracer(Loggable):
         """
         Activate patcher for injection.
         """
-        patcher = request_patcher(outbound_library)
+        patcher = self.profiler.register_patcher(outbound_library)
         patcher.register_observer(self.handle_outbound_request)
-        patcher.set_trace_context_to_inject(self.tracing_context)
+        patcher.set_data_to_inject(self.tracing_context.to_injectable())
         patcher.activate()
 
         self._active_outbound_patchers.append(patcher)
@@ -187,17 +210,15 @@ class DistributedTracer(Loggable):
         outbound_context: OutboundContext
             Context of the outbound request.
         """
+        if outbound_context.operation not in OUTGOING_OPERATIONS:
+            return
+
         identifier_string = outbound_context.identifier_string
         if identifier_string in self._recorded_identifier:
-            self.logger.info(
-                f"[TRACER]: Skip recording {identifier_string}. Already recorded.")
             return
 
         self._outbound_contexts.append(outbound_context)
         self._recorded_identifier.add(identifier_string)
-
-        self.logger.info(
-            f"[TRACER]: Recorded outgoing request: {identifier_string}")
 
     def handle_function_response(
         self,

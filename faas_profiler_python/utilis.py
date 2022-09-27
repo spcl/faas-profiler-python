@@ -9,10 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import traceback
-import yaml
 import re
 
-from os import path
 from typing import Any, Callable
 from datetime import datetime
 from base64 import b64decode, b64encode
@@ -31,7 +29,8 @@ URL_REGES = re.compile(
 def invoke_instrumented_function(
     func: Callable,
     func_args: tuple,
-    func_kwargs: dict
+    func_kwargs: dict,
+    with_traceback: bool = False
 ) -> tuple:
     """
     Executes a function with timing and error capturing.
@@ -47,7 +46,8 @@ def invoke_instrumented_function(
     try:
         response = func(*func_args, **func_kwargs)
     except Exception as exc:
-        traceback_list = traceback.format_exc().split("\n")
+        if with_traceback:
+            traceback_list = traceback.format_exc().split("\n")
         error = exc
     finally:
         finished_at = datetime.now()
@@ -74,11 +74,6 @@ def get_idx_safely(arr: list, idx: int, default: Any = None) -> Any:
         return arr[idx]
     except IndexError:
         return default
-
-
-def split_plugin_name(name: str, delimiter: str = "::") -> tuple:
-    parts = name.split(delimiter)
-    return (parts[:-1], get_idx_safely(parts, -1))
 
 
 def decode_base64_json_to_dict(base64_json: Any) -> dict:
@@ -124,26 +119,6 @@ def combine_list_and_dict(
     """
     list_as_dict = {idx: val for idx, val in enumerate(a_list)}
     return {**list_as_dict, **a_dict}
-
-
-def file_exsits_yaml_parseable(filename: str) -> dict:
-    """
-    Returns parsed yaml if it exsits and it is valid.
-    If not, returns None
-    """
-    if filename is None or not path.exists(filename):
-        return None
-
-    try:
-        with open(filename, "r") as fp:
-            config = yaml.safe_load(fp)
-
-        if isinstance(config, dict):
-            return config
-    except (IOError, yaml.YAMLError):
-        pass
-
-    return None
 
 
 def is_url(url: str) -> bool:

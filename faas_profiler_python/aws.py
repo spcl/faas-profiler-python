@@ -6,6 +6,7 @@ Module for all AWS specific logic.
 import base64
 import io
 import json
+import re
 
 from collections import namedtuple
 from urllib.parse import urlparse
