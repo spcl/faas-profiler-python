@@ -5,28 +5,29 @@ Entry point for all measurements and profiling.
 The Profiles class handles all measurements and tracing.
 """
 
+import json
 import os
+import gc
 
 from datetime import datetime
-from typing import Type, Callable, Any
+from typing import List, Type, Callable, Any
 from multiprocessing import Pipe, connection
 from functools import wraps
-from uuid import uuid4
 
-from faas_profiler_python.config import Config, MeasuringState, Function
+from faas_profiler_python.config import load_configuration, MeasuringState, Function
 from faas_profiler_python.function import resolve_function_context
-from faas_profiler_python.measurements import Measurement, PeriodicMeasurement
+from faas_profiler_python.measurements import load_all_measurements
 from faas_profiler_python.payload import Payload
 from faas_profiler_python.tracer import DistributedTracer
-from faas_profiler_python.captures import Capture
-from faas_profiler_python.exporters import Exporter, ResultCollector
+from faas_profiler_python.captures import load_all_captures
+from faas_profiler_python.exporters import load_all_exporters
 from faas_profiler_python.utilis import Loggable, invoke_instrumented_function
 from faas_profiler_python.core import (
     BatchExecution,
     PeriodicProcess,
-    RecordDataType,
-    split_plugin_list_by_subclass
+    RecordDataType
 )
+from faas_profiler_python.patchers import FunctionPatcher, request_patcher
 
 
 def profile(config_file: str = None):
@@ -47,6 +48,9 @@ def profile(config_file: str = None):
 
             function_return = profiler(func, *args, **kwargs)
 
+            del profiler
+            gc.collect()
+
             return function_return
         return profiler_wrapper
     return function_profiler
@@ -59,34 +63,29 @@ class Profiler(Loggable):
 
     def __init__(self, config_file: str = None) -> None:
         super().__init__()
-
         # Resolve serverless function
         self.function_context = resolve_function_context()
-        self.function_context.invoked_at = datetime.now()
 
         # Load user configuration
-        self.config = Config.initialize(config_file=config_file)
+        self.config = load_configuration(config_file)
 
-        # Load all requested plugins
-        captures = Capture.load(self.config.captures)
-        measurements = Measurement.load(self.config.measurements)
-        self.exporters = Exporter.load(self.config.exporters)
+        self.default_measurements, self.periodic_measurements = load_all_measurements(
+            self.config.measurements)
+        self.exporters = load_all_exporters(self.config.exporters)
+        self.captures = load_all_captures(self.config.captures)
 
-        periodic_measurements, default_measurements = split_plugin_list_by_subclass(
-            measurements, PeriodicMeasurement)
-
-        self.periodic_batch = BatchExecution(
-            periodic_measurements,
-            batch_type=RecordDataType.PERIODIC_MEASUREMENT)
         self.default_batch = BatchExecution(
-            default_measurements,
+            self.default_measurements,
             batch_type=RecordDataType.SIMPLE_MEASUREMENT)
-        self.capture_batch = BatchExecution(captures,
-                                            batch_type=RecordDataType.CAPTURE)
+        self.capture_batch = BatchExecution(
+            self.captures,
+            batch_type=RecordDataType.CAPTURE)
 
         # Distributed Tracer
         self.tracer = DistributedTracer(
-            self.config, self.function_context.provider)
+            self, self.config, self.function_context.provider)
+
+        self._active_function_patchers: List[FunctionPatcher] = {}
 
         self._default_measurements_started: bool = False
         self._periodic_measurements_started: bool = False
@@ -101,14 +100,11 @@ class Profiler(Loggable):
         self.function: Type[Function] = None
         self.payload: Type[Payload] = None
 
-        self.periodic_results_path = os.path.join(
-            self.config.tmp_result_storage,
-            f"{uuid4()}.json")
-
         self.logger.info((
             "[PROFILER PLAN]: \n"
-            f"- Measurements: {measurements} \n"
-            f"- Captures: {captures} \n"
+            f"- Simple Measurements: {self.default_measurements} \n"
+            f"- Periodic Measurements: {self.periodic_measurements} \n"
+            f"- Captures: {self.captures} \n"
             f"- Exporters: {self.exporters}"
         ))
 
@@ -132,7 +128,7 @@ class Profiler(Loggable):
 
         self.logger.info(f"-- EXECUTING FUNCTION: {func.__name__} --")
         response, error, traceback_list, executed_at, finished_at = invoke_instrumented_function(
-            func, args, kwargs)
+            func, args, kwargs, with_traceback=self.config.include_traceback)
         self.logger.info("-- FUNCTION EXCUTED --")
 
         self.function_context.handler_executed_at = executed_at
@@ -143,9 +139,7 @@ class Profiler(Loggable):
             self.function_context.error_type = error.__class__.__name__
             self.function_context.error_message = str(error)
             self.function_context.response = None
-
-            if self.config.include_traceback:
-                self.function_context.traceback = traceback_list
+            self.function_context.traceback = traceback_list
         else:
             self.function_context.has_error = False
             self.function_context.error_type = None
@@ -159,11 +153,16 @@ class Profiler(Loggable):
         self.export()
 
         self._deinitialize_default_measurements()
+        if self.periodic_process:
+            self.periodic_process.join()
+            self._terminate_peridoic_process()
+
+        return_value = self.tracer.handle_function_response(response)
 
         if error:
             raise error
         else:
-            return self.tracer.handle_function_response(response)
+            return return_value
 
     def start(self) -> None:
         """
@@ -189,46 +188,52 @@ class Profiler(Loggable):
 
         self.tracer.stop_tracing_outbound_requests()
 
-        if self.periodic_process:
-            self.periodic_process.join()
-            self._terminate_peridoic_process()
-
     def export(self):
         """
         Exports the profiling data.
         """
-        if not self.config.exporters:
+        if not self.exporters:
             self.logger.warn(
                 "[EXPORT]: No exporters defined. Will discard results.")
             return
 
-        self.logger.info(
-            "[EXPORT]: Collecting results.")
+        self.logger.info("[EXPORT]: Collecting results.")
+
+        record_data = {
+            **self.default_batch.export_results(),
+            **self.capture_batch.export_results(),
+            **self._export_periodic_measurements()}
 
         self.function_context.finished_at = datetime.now()
-        results_collector = ResultCollector(
-            function_context=self.function_context,
-            tracing_context=self.tracer.tracing_context,
-            inbound_context=self.tracer.inbound_context,
-            outbound_contexts=self.tracer.outbound_contexts,
-            periodic_results_file=self.periodic_results_path,
-            default_batch=self.default_batch,
-            capture_batch=self.capture_batch)
+
+        trace_record = {
+            **self.tracer.dump_contexts(),
+            "function_context": self.function_context.dump(),
+            "data": record_data}
 
         for exporter_plugin in self.exporters:
             try:
                 exporter = exporter_plugin.cls(
                     **exporter_plugin.parameters)
 
-                exporter.export(results_collector)
+                exporter.export(trace_record)
             except Exception as err:
                 self.logger.error(
                     f"Exporting with {exporter_plugin.cls} failed: {err}")
 
-        if os.path.exists(self.periodic_results_path):
-            self.logger.info(
-                f"[EXPORT]: Delete tmp storage file: {self.periodic_results_path}")
-            os.remove(self.periodic_results_path)
+    def register_patcher(self, patcher_string) -> Type[FunctionPatcher]:
+        """
+        Registers a new patcher.
+        Returns a cached one if exists.
+        """
+        if patcher_string in self._active_function_patchers:
+            return self._active_function_patchers[patcher_string]
+
+        patcher_cls = request_patcher(patcher_string)
+        patcher_obj = patcher_cls()
+        self._active_function_patchers[patcher_string] = patcher_obj
+
+        return patcher_obj
 
     def _start_default_measurements(self):
         """
@@ -249,14 +254,13 @@ class Profiler(Loggable):
         """
         Starts all periodic measurements by creating a process with the batch execution
         """
-        if not self.periodic_batch:
+        if len(self.periodic_measurements) == 0:
             return
 
         self.child_endpoint, self.parent_endpoint = Pipe()
         self.periodic_process = PeriodicProcess(
-            batch=self.periodic_batch,
+            periodic_measurements=self.periodic_measurements,
             function_pid=self.function_pid,
-            result_storage_path=self.periodic_results_path,
             child_connection=self.child_endpoint,
             parent_connection=self.parent_endpoint,
             refresh_interval=self.config.measurement_interval)
@@ -320,7 +324,7 @@ class Profiler(Loggable):
             return
 
         # Send child process request to stop
-        self.parent_endpoint.send(MeasuringState.STOPPED)
+        self.parent_endpoint.send({"state": MeasuringState.STOPPED})
 
         try:
             self.periodic_process.wait_for_state(MeasuringState.STOPPED)
@@ -329,6 +333,34 @@ class Profiler(Loggable):
         except Exception as err:
             self.logger.error(
                 f"[DEFAULT MEASUREMENTS]: Stopping and shutting down failed: {err}")
+
+    def _export_periodic_measurements(self) -> dict:
+        """
+        Exports the data from periodic measurements
+        """
+        if not self.parent_endpoint:
+            return {}
+
+        if not self.parent_endpoint.poll(5):
+            return {}
+
+        child_state = self.parent_endpoint.recv()
+        if child_state.get("state") == MeasuringState.EXPORT_DATA:
+            return child_state.get("data", {})
+        elif child_state.get("state") == MeasuringState.EXPORT_FILE:
+            data_file = child_state.get("data")
+            try:
+                with open(data_file, "r") as fp:
+                    data = json.load(fp)
+
+                os.remove(data_file)
+                return data
+            except Exception as err:
+                self.logger.error(
+                    f"[EXPORT] Failed to load export file: {err}")
+                return {}
+
+        return {}
 
     def _terminate_peridoic_process(self):
         """
@@ -340,12 +372,16 @@ class Profiler(Loggable):
             self.periodic_process.terminate()
 
         if self.parent_endpoint and not self.parent_endpoint.closed:
-            self.logger.info(f"Closed parent pipe: {self.parent_endpoint}")
             self.parent_endpoint.close()
+            self.logger.info(f"Closed parent pipe: {self.parent_endpoint}")
 
-        if self.child_endpoint and not self.parent_endpoint.closed:
-            self.logger.info(f"Closed child pipe: {self.child_endpoint}")
+        if self.child_endpoint and not self.child_endpoint.closed:
             self.child_endpoint.close()
+            self.logger.info(f"Closed child pipe: {self.child_endpoint}")
+
+        del self.periodic_process
+        del self.parent_endpoint
+        del self.child_endpoint
 
     def _start_capturing(self):
         """
@@ -357,7 +393,7 @@ class Profiler(Loggable):
         self.logger.info(
             "[CAPTURES]: Initializing and starting.")
 
-        self.capture_batch.initialize()
+        self.capture_batch.initialize(profiler=self)
         self.capture_batch.start()
         self._captures_started = True
 
