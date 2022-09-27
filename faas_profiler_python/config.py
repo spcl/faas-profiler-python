@@ -6,16 +6,15 @@ FaaS-Profiler configuration
 from __future__ import annotations
 
 import logging
+import ujson
+import yaml
 
 from os import environ
 from os.path import exists, abspath, dirname, isabs, join
-from enum import Enum
-from dataclasses import dataclass
-from typing import Any, Dict, List, Type
+from enum import Enum, auto
+from typing import List, Type
 from collections import namedtuple
-from faas_profiler_python.utilis import get_idx_safely, lowercase_keys, file_exsits_yaml_parseable
-from faas_profiler_core.constants import Provider
-
+from faas_profiler_python.utilis import get_idx_safely, lowercase_keys
 """
 Constants
 """
@@ -45,9 +44,6 @@ Function = namedtuple("FunctionPayload", "function args kwargs")
 Plugins Config
 """
 
-UnresolvedPlugin = namedtuple(
-    'UnresolvedPlugin',
-    'name parameters external_path')
 LoadedPlugin = namedtuple(
     "LoadedPlugin",
     "name cls parameters")
@@ -57,8 +53,41 @@ Configuration
 """
 
 
-class ConfigSyntaxError(SyntaxError):
-    pass
+WILDCARD_KEY = "*"
+
+PLUGIN_NAME_KEY = "name"
+PLUGIN_FROM_KEY = "from"
+PLUGIN_CFG_KEY = "parameters"
+
+PROFILER_KEY = "profiler"
+
+MEASUREMENTS_KEY = "measurements"
+CAPTURES_KEY = "captures"
+EXPORTERS_KEY = "exporters"
+TRACING_KEY = "tracing"
+
+MEASUREMENTS_ENV_KEY = "FP_MEASUREMENTS"
+CAPTURES_ENV_KEY = "FP_CAPTURES"
+EXPORTERS_ENV_KEY = "FP_EXPORTERS"
+TRACING_ENV_KEY = "FP_TRACING"
+
+ENV_PLUGIN_DELIMITER = ","
+ENV_PARAMETER_DELIMITER = "#"
+ENV_PARAMETER_NAME_DELIMITER = 2 * ENV_PARAMETER_DELIMITER
+
+
+def load_configuration(config_path: str = None) -> Type[Config]:
+    """
+    Loads profiler configuration
+    """
+    if config_path is None:
+        return Config.load_by_env()
+    elif str(config_path).endswith(".yml"):
+        return Config.from_yaml_file(config_path)
+    elif str(config_path).endswith(".json"):
+        return Config.from_json_file(config_path)
+    else:
+        return Config()
 
 
 class Config:
@@ -66,71 +95,35 @@ class Config:
     Representation of the FaaS-Profiler config file or env variables
     """
 
-    _logger = logging.getLogger("Config")
-    _logger.setLevel(logging.INFO)
-
-    WILDCARD_KEY = "*"
-
-    PLUGIN_NAME_KEY = "name"
-    PLUGIN_FROM_KEY = "from"
-    PLUGIN_CFG_KEY = "parameters"
-
-    PROFILER_KEY = "profiler"
-
-    MEASUREMENTS_KEY = "measurements"
-    CAPTURES_KEY = "captures"
-    EXPORTERS_KEY = "exporters"
-    TRACING_KEY = "tracing"
-
-    OUTBOUND_REQUESTS_TABLES_KEY = "outbound_requests_tables"
-
-    MEASUREMENTS_ENV_KEY = "FP_MEASUREMENTS"
-    CAPTURES_ENV_KEY = "FP_CAPTURES"
-    EXPORTERS_ENV_KEY = "FP_EXPORTERS"
-    TRACING_ENV_KEY = "FP_TRACING"
-
-    ENV_PLUGIN_DELIMITER = ","
-    ENV_PARAMETER_DELIMITER = "#"
-    ENV_PARAMETER_NAME_DELIMITER = 2 * ENV_PARAMETER_DELIMITER
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
 
     @classmethod
-    def initialize(
-        cls,
-        config_file: str = None
-    ) -> Type[Config]:
-        """
-        Initializes the config either by config file or env variables.
-        """
-        config_by_file = cls._load_by_file(config_file)
-        if config_by_file is not None:
-            cls._logger.info(f"Loaded configuration of {config_file}")
-            return config_by_file
-
-        config_by_env = cls._load_by_env()
-        if config_by_env is not None:
-            cls._logger.info("Loaded configuration of env variables.")
-            return config_by_env
-
-        return cls()
-
-    @classmethod
-    def _load_by_file(cls, filename: str) -> Type[Config]:
+    def from_json_file(cls, json_path_file: str) -> Type[Config]:
         """
         Load the passed configuration file if it exists and is readable.
         """
-        if filename is None:
-            return
-
-        config_by_file = file_exsits_yaml_parseable(filename)
-        if config_by_file is None:
-            cls._logger.warn(
-                f"Could not load config of {filename}. Make sure the file exists and is valid yaml.")
-            return
-
-        return cls(config=config_by_file, config_file=filename)
+        try:
+            with open(json_path_file, "r") as fp:
+                return Config(ujson.load(fp), json_path_file)
+        except Exception as err:
+            cls.logger.error(f"Loading {json_path_file} failed: {err}")
+            return Config({}, json_path_file)
 
     @classmethod
-    def _load_by_env(cls) -> Type[Config]:
+    def from_yaml_file(cls, yaml_path_file: str) -> Type[Config]:
+        """
+        Load the passed configuration file if it exists and is readable.
+        """
+        try:
+            with open(yaml_path_file, "r") as fp:
+                return Config(yaml.safe_load(fp), yaml_path_file)
+        except Exception as err:
+            cls.logger.error(f"Loading {yaml_path_file} failed: {err}")
+            return Config({}, yaml_path_file)
+
+    @classmethod
+    def load_by_env(cls) -> Type[Config]:
         """
         Loads config by env variables.
         """
@@ -164,12 +157,12 @@ class Config:
 
             return plugins
 
-        return cls(config={
-            "measurements": _parse_env_plugins(environ.get(cls.MEASUREMENTS_ENV_KEY)),
-            "captures": _parse_env_plugins(environ.get(cls.CAPTURES_ENV_KEY)),
-            "exporters": _parse_env_plugins(environ.get(cls.EXPORTERS_ENV_KEY))
-            # "tracing": _parse_env_plugins(environ.get(cls.MEASUREMENTS_ENV_KEY))
-        })
+        return cls(
+            config={
+                "measurements": _parse_env_plugins(
+                    environ.get(MEASUREMENTS_ENV_KEY)), "captures": _parse_env_plugins(
+                    environ.get(CAPTURES_ENV_KEY)), "exporters": _parse_env_plugins(
+                    environ.get(EXPORTERS_ENV_KEY))})
 
     def __init__(
         self,
@@ -177,30 +170,23 @@ class Config:
         config_file: str = None
     ) -> None:
         self.config_file = config_file
-        self.config = lowercase_keys(config)
+        self.config = config
 
         try:
             self.config_dir = abspath(dirname(self.config_file))
         except Exception as err:
-            self._logger.error(f"Could not resolve dir of config file: {err}")
+            self.logger.error(f"Could not resolve dir of config file: {err}")
             self.config_dir = None
 
-        self._profiler_settings = lowercase_keys(
-            self.config.get(self.PROFILER_KEY, {}))
-        self._function_context_settings = lowercase_keys(
-            self._profiler_settings.get("function_context", {}))
+        self._profiler_settings = self.config.get(PROFILER_KEY, {})
+        self._function_context_settings = self._profiler_settings.get(
+            "function_context", {})
 
-        self._measurements: List[UnresolvedPlugin] = self._parse_to_plugins(
-            self.MEASUREMENTS_KEY)
-        self._captures: List[UnresolvedPlugin] = self._parse_to_plugins(
-            self.CAPTURES_KEY)
-        self._exporters: List[UnresolvedPlugin] = self._parse_to_plugins(
-            self.EXPORTERS_KEY)
+        self._measurements: List[dict] = self.config.get(MEASUREMENTS_KEY, [])
+        self._captures: List[dict] = self.config.get(CAPTURES_KEY, [])
+        self._exporters: List[dict] = self.config.get(EXPORTERS_KEY, [])
 
-        self._tracing = lowercase_keys(self.config.get(self.TRACING_KEY, {}))
-
-        self._outbound_requests_tables = self._parse_outbound_requests_tables(
-            self.OUTBOUND_REQUESTS_TABLES_KEY)
+        self._tracing = lowercase_keys(self.config.get(TRACING_KEY, {}))
 
     @property
     def measurement_interval(self) -> float:
@@ -210,7 +196,7 @@ class Config:
         return float(
             self._profiler_settings.get(
                 "measurement_interval",
-                0.001))
+                0.01))
 
     @property
     def include_environment_variables(self) -> bool:
@@ -246,7 +232,7 @@ class Config:
         """
         Returns True if tracing is enabled.
         """
-        return self._tracing.get("enabled", True)
+        return self._tracing.get("enabled", False)
 
     @property
     def trace_outgoing_requests(self) -> List[str]:
@@ -254,8 +240,8 @@ class Config:
         Returns a list of outgoing request types which should be traced.
         """
         trace_out_requests = self._tracing.get(
-            "trace_outgoing_requests", self.WILDCARD_KEY)
-        if trace_out_requests == self.WILDCARD_KEY:
+            "trace_outgoing_requests", [])
+        if trace_out_requests == WILDCARD_KEY:
             return ALL_PATCHERS
 
         if isinstance(trace_out_requests, list):
@@ -272,98 +258,25 @@ class Config:
         return self._tracing.get("inject_response", False)
 
     @property
-    def outbound_requests_tables(self) -> Dict[Provider, dict]:
-        """
-        Returns a dict for each configured outbound request table with parameters
-        """
-        return self._outbound_requests_tables
-
-    @property
-    def measurements(self) -> List[UnresolvedPlugin]:
+    def measurements(self) -> List[dict]:
         """
         Returns a List of Entities for each requested measurement
         """
         return self._measurements
 
     @property
-    def captures(self) -> List[UnresolvedPlugin]:
+    def captures(self) -> List[dict]:
         """
         Returns a List of Entities for each requested capture
         """
         return self._captures
 
     @property
-    def exporters(self) -> List[UnresolvedPlugin]:
+    def exporters(self) -> List[dict]:
         """
         Returns a List of Entities for each requested exporter
         """
         return self._exporters
-
-    @property
-    def tmp_result_storage(self) -> str:
-        """
-        Returns path to temporaly result storge
-        """
-        return abspath("/tmp")
-
-    def _parse_to_plugins(self, key: str) -> List[UnresolvedPlugin]:
-        """
-        Creates a list of unresolved plugins based on the list of requested plugins.
-        """
-        entities = []
-        config_list = self.config.get(key, [])
-        if config_list is None:
-            config_list = []
-
-        if not isinstance(config_list, list):
-            raise ConfigSyntaxError(
-                f"Config of {key} must be a list, got {type(config_list)}")
-
-        for config_item in config_list:
-            if self.PLUGIN_NAME_KEY not in config_item:
-                continue
-
-            if self.PLUGIN_FROM_KEY in config_item:
-                _external_path = self._resolve_external_path(
-                    config_item[self.PLUGIN_FROM_KEY])
-
-                if not _external_path:
-                    self._logger.error(
-                        f"File {config_item[self.PLUGIN_FROM_KEY]} for external plugin does not exists.")
-            else:
-                _external_path = None
-
-            entities.append(UnresolvedPlugin(
-                config_item[self.PLUGIN_NAME_KEY],
-                config_item.get(self.PLUGIN_CFG_KEY, {}),
-                _external_path))
-
-        return entities
-
-    def _parse_outbound_requests_tables(
-        self,
-        key: str
-    ) -> Dict[Provider, dict]:
-        tables = {}
-        tables_config = self._tracing.get(key, [])
-        if not isinstance(tables_config, list):
-            raise ConfigSyntaxError(
-                f"Config of {key} must be a list, got {type(tables_config)}")
-
-        for table_config in tables_config:
-            provider_str = str(table_config.get("provider")).lower()
-            try:
-                provider = Provider(provider_str)
-            except ValueError:
-                pass
-            else:
-                if provider in tables:
-                    raise ConfigSyntaxError(
-                        f"Duplicate key for {provider}. Outbound Request Table for {provider} already defined.")
-
-                tables[provider] = table_config.get("parameters", {})
-
-        return tables
 
     def _resolve_external_path(self, external_path: str) -> str:
         """
@@ -391,15 +304,8 @@ class MeasuringState(Enum):
     """
     Enumeration of different measuring states.
     """
-    STARTED = 1
-    STOPPED = 2
-    ERROR = -1
-
-
-@dataclass
-class ProcessFeedback:
-    """
-    Dataclass for feeback sending between Measurement process and main process.
-    """
-    state: MeasuringState
-    data: Any = None
+    STARTED = auto()
+    STOPPED = auto()
+    EXPORT_FILE = auto()
+    EXPORT_DATA = auto()
+    ERROR = auto()
