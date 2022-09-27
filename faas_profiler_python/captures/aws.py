@@ -90,16 +90,13 @@ class EFSAccess(Capture):
         Capture a EFS file access.
         """
         if outbound_context.provider != Provider.INTERNAL:
-            print("hoer")
             return
 
         if outbound_context.service != InternalService.IO:
-            print("da")
             return
 
         file = outbound_context.tags.get("file")
         if not str(file).startswith(self.mount_point):
-            print("dort")
             return
 
         self._result.accesses.append(EFSAccessItem(

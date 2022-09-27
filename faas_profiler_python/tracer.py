@@ -30,16 +30,15 @@ Distributed Tracer
 
 AVAILABLE_OUTBOUND_PATCHERS = {
     "aws": ["botocore"],
-    # "requests": [SessionSend],
-    # "gcp": [
-    #     StorageUploadFile,
-    #     StorageUploadFileMemory,
-    #     StorageUploadFileName,
-    #     StorageDeleteFile,
-    #     InvokeFunction,
-    #     PubSubPublish,
-    #     TasksCreate
-    # ]
+    "gcp": [
+        "google_cloud_function",
+        "google_cloud_storage_filename",
+        "google_cloud_storage_file",
+        "google_cloud_storage_memory",
+        "google_cloud_storage_delete",
+        "google_cloud_pubsub",
+        "google_cloud_tasks"
+    ]
 }
 
 OUTGOING_OPERATIONS = [
@@ -193,10 +192,10 @@ class DistributedTracer(Loggable):
             parent_context=payload.extract_tracing_context())
 
         self.logger.info(
-            f"[TRACER]: Inbound Context: {self._tracing_context}")
+            f"[TRACER]: Inbound Context: {self._inbound_context}")
 
         self.logger.info(
-            f"[TRACER]: Tracing Context: {self._inbound_context}")
+            f"[TRACER]: Tracing Context: {self._tracing_context}")
 
     def handle_outbound_request(
         self,
