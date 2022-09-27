@@ -19,6 +19,10 @@ from faas_profiler_python.aws import extract_outbound_contexts, inject_payload
 Botocore Patcher
 """
 
+__all__ = [
+    "BotocoreAPI"
+]
+
 
 class BotocoreAPI(FunctionPatcher):
     module_name: str = "botocore.client"

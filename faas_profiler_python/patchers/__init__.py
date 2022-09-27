@@ -122,23 +122,22 @@ class FunctionPatcher(BasePlugin, Loggable):
         if self._patched:
             return
 
-        parent, attribute, original = resolve_path(
-            self.module_name, self.function_name)
         if self.module_name not in sys.modules:
             self.logger.info(
                 f"Module {self.module_name} not yet imported. Set import hook.")
             when_imported(
                 self.module_name)(
-                lambda *args, **kwargs: self._wrap_function(
-                    parent, attribute, original))
+                lambda *args, **kwargs: self._wrap_function())
         else:
-            self._wrap_function(parent, attribute, original)
+            self._wrap_function()
 
-    def _wrap_function(self, parent, attribute, original) -> None:
+    def _wrap_function(self) -> None:
         """
         Wraps the requsted function with the function wrapper.
         """
         try:
+            parent, attribute, original = resolve_path(
+                self.module_name, self.function_name)
             wrapper = FunctionWrapper(original, self._function_wrapper)
             if isinstance(original, FunctionWrapper):
                 self.logger.info(
@@ -260,7 +259,13 @@ Request new patcher.
 AVAILABLE_PATCHERS = {
     "botocore": "faas_profiler_python.patchers.botocore.BotocoreAPI",
     "open_io": "faas_profiler_python.patchers.io.OpenIO",
-}
+    "google_cloud_function": "faas_profiler_python.patchers.google_cloud.InvokeFunction",
+    "google_cloud_storage_filename": "faas_profiler_python.patchers.google_cloud.StorageUploadFileName",
+    "google_cloud_storage_file": "faas_profiler_python.patchers.google_cloud.StorageUploadFile",
+    "google_cloud_storage_memory": "faas_profiler_python.patchers.google_cloud.StorageUploadFileMemory",
+    "google_cloud_storage_delete": "faas_profiler_python.patchers.google_cloud.StorageDeleteFile",
+    "google_cloud_pubsub": "faas_profiler_python.patchers.google_cloud.PubSubPublish",
+    "google_cloud_tasks": "faas_profiler_python.patchers.google_cloud.TasksCreate"}
 
 
 def request_patcher(

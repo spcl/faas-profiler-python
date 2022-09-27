@@ -21,6 +21,9 @@ from faas_profiler_core.constants import (
 from faas_profiler_python.patchers import FunctionPatcher
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
 
+__all__ = [
+    "OpenIO"
+]
 
 IO_MODE_TO_OPERATION = {
     "r": InternalOperation.IO_READ,
