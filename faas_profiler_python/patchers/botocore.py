@@ -8,11 +8,11 @@ from __future__ import annotations
 from typing import List, Tuple, Type
 
 from faas_profiler_core.constants import AWSService, AWSOperation
-from faas_profiler_core.models import OutboundContext, TracingContext
+from faas_profiler_core.models import OutboundContext
 
-from faas_profiler_python.patchers import FunctionPatcher, PatchContext
+from faas_profiler_python.patchers import FunctionPatcher, PatchContext, ReturnContext
 from faas_profiler_python.utilis import get_arg_by_key_or_pos
-from faas_profiler_python.aws import AWSOutbound
+from faas_profiler_python.aws import extract_outbound_contexts, inject_payload
 
 
 """
@@ -21,58 +21,31 @@ Botocore Patcher
 
 
 class BotocoreAPI(FunctionPatcher):
-    module_name: str = "botocore"
-    submodules: str = ["client"]
+    module_name: str = "botocore.client"
     function_name: str = "BaseClient._make_api_call"
 
-    def initialize(
+    def extract_outbound_context(
         self,
-        patch_context: Type[PatchContext]
-    ) -> None:
+        patch_context: PatchContext,
+        return_context: ReturnContext
+    ) -> List[Type[OutboundContext]]:
+        """
+        Extracts Outbound Context from botocore API call.
+        """
         service, operation = aws_service_and_operation_detection(patch_context)
-        self.logger.info(
-            f"[AWS PATCHER]: Detected Service: {service} and operation {operation}")
-
-        self.aws_outbound = AWSOutbound(
-            service, operation, patch_context)
-
-    def extract_outbound_context(self) -> List[Type[OutboundContext]]:
-        """
-        Extracts outbound context based on AWS API call done with boto3
-        """
-        if self.aws_outbound:
-            return self.aws_outbound.extract_outbound_contexts()
-
-        return []
+        return extract_outbound_contexts(
+            service, operation, patch_context, return_context)
 
     def inject_tracing_context(
         self,
-        tracing_context: Type[TracingContext]
+        patch_context: PatchContext,
+        data: dict
     ) -> None:
         """
         Modifies the function arguments to inject a trace context (In place).
         """
-        if self.aws_outbound:
-            return self.aws_outbound.inject_payload(
-                tracing_context.to_injectable())
-
-    def _get_http_info(
-        self,
-        meta,
-        operation_name: str = None
-    ) -> tuple:
-        if operation_name and meta:
-            try:
-                op_model = meta.service_model.operation_model(operation_name)
-
-                return (
-                    op_model.http.get("method"),
-                    op_model.http.get("requestUri"))
-            except Exception as err:
-                self._logger.error(f"Could not get operation model: {err}")
-                return None, None
-
-        return None, None
+        service, operation = aws_service_and_operation_detection(patch_context)
+        inject_payload(service, operation, patch_context, data)
 
 
 def aws_service_and_operation_detection(

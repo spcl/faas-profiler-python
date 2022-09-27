@@ -7,30 +7,16 @@ Patching functionality
 from __future__ import annotations
 
 import sys
-import logging
+import importlib
 
 from typing import Any, Callable, List, Set, Type
 from wrapt import when_imported, resolve_path, apply_patch, FunctionWrapper
-from dataclasses import dataclass
 from collections import namedtuple
 
-from faas_profiler_core.models import OutboundContext, TracingContext
+from faas_profiler_core.models import OutboundContext
 
 from faas_profiler_python.utilis import Loggable, invoke_instrumented_function
 from faas_profiler_python.core import BasePlugin
-
-_logger = logging.getLogger("Patchers")
-_logger.setLevel(logging.INFO)
-
-
-# @dataclass
-# class PatchContext:
-#     instance: Any
-#     function: Callable
-#     args: tuple
-#     kwargs: dict
-#     response: Any
-#     error: Exception
 
 PatchContext = namedtuple("PatchContext", "instance function args kwargs")
 ReturnContext = namedtuple("ReturnContext", "response error")
@@ -59,7 +45,6 @@ class FunctionPatcher(BasePlugin, Loggable):
         Unpatch the function.
         """
         self._deinitialize_patch()
-
 
     def register_observer(self, observe_function: Callable) -> None:
         """
@@ -137,7 +122,8 @@ class FunctionPatcher(BasePlugin, Loggable):
         if self._patched:
             return
 
-        parent, attribute, original = resolve_path(self.module_name, self.function_name)
+        parent, attribute, original = resolve_path(
+            self.module_name, self.function_name)
         if self.module_name not in sys.modules:
             self.logger.info(
                 f"Module {self.module_name} not yet imported. Set import hook.")
@@ -177,12 +163,13 @@ class FunctionPatcher(BasePlugin, Loggable):
             return
 
         try:
-            parent, attribute, _ = resolve_path(self.module_name, self.function_name)
+            parent, attribute, _ = resolve_path(
+                self.module_name, self.function_name)
             apply_patch(parent, attribute, self._original_method)
 
             self.logger.info(
                 f"Patch successfully removed for function {self.function_name} in module {self.module_name}")
-            
+
             self._patched = False
         except Exception as err:
             self.logger.error(
@@ -204,14 +191,14 @@ class FunctionPatcher(BasePlugin, Loggable):
         patch_context = PatchContext(instance, func, args, kwargs)
 
         self._inject_tracing_context(patch_context)
-        breakpoint()
         response, error, _, invoked_at, finished_at = invoke_instrumented_function(
             func, patch_context.args, patch_context.kwargs, with_traceback=False)
 
         return_context = ReturnContext(response, error)
 
         try:
-            outbound_contexts = self.extract_outbound_context(patch_context, return_context)
+            outbound_contexts = self.extract_outbound_context(
+                patch_context, return_context)
         except Exception as err:
             self.logger.error(
                 f"Execution outbound context extraction for patched function "
@@ -225,7 +212,8 @@ class FunctionPatcher(BasePlugin, Loggable):
         else:
             return response
 
-    def _notify_observers(self,
+    def _notify_observers(
+        self,
         outbound_contexts: List[Type[OutboundContext]],
         invoked_at,
         finished_at
@@ -233,7 +221,8 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         Notifies all registered oberservers.
         """
-        if not self._registered_observers or len(self._registered_observers) == 0:
+        if not self._registered_observers or len(
+                self._registered_observers) == 0:
             return
 
         if not outbound_contexts or len(outbound_contexts) == 0:
@@ -249,7 +238,6 @@ class FunctionPatcher(BasePlugin, Loggable):
                 except Exception as err:
                     self.logger.error(
                         f"Notifying {oberserver_function} failed: {err}")
-
 
     def _inject_tracing_context(self, patch_context: PatchContext) -> None:
         """
@@ -269,23 +257,27 @@ class FunctionPatcher(BasePlugin, Loggable):
 Request new patcher.
 """
 
+AVAILABLE_PATCHERS = {
+    "botocore": "faas_profiler_python.patchers.botocore.BotocoreAPI",
+    "open_io": "faas_profiler_python.patchers.io.OpenIO",
+}
+
 
 def request_patcher(
-    patch_cls: FunctionPatcher
-) -> Type[FunctionPatcher]:
+    patcher_str: str
+) -> FunctionPatcher:
     """
-    Returns a patcher instance for the requested patcher class.
-
-    Makes sure, that only one patcher exists.
+    Returns a patcher cls for given string
     """
-    # if patch_cls in ACTIVE_FUNCTION_PATCHERS:
-    #     _logger.info(
-    #         f"Patcher for {patch_cls} already exists. Return cached one.")
-    #     return ACTIVE_FUNCTION_PATCHERS[patch_cls]
+    if patcher_str not in AVAILABLE_PATCHERS:
+        raise RuntimeError(f"No patcher found for {patcher_str}")
 
-    _logger.info(
-        f"Creating new patcher for requested {patch_cls}.")
-    patcher = patch_cls()
-    # ACTIVE_FUNCTION_PATCHERS[patch_cls] = patcher
+    module_str, klass_str = AVAILABLE_PATCHERS[patcher_str].rsplit(".", 1)
 
-    return patcher
+    try:
+        module = importlib.import_module(module_str)
+        klass = getattr(module, klass_str)
+        return klass
+    except (ImportError, AttributeError):
+        raise RuntimeError(
+            f"No module found {module_str} with patcher class {klass_str}")
