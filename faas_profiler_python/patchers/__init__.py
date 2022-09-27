@@ -8,67 +8,38 @@ from __future__ import annotations
 
 import sys
 import logging
-import importlib
 
-from threading import Lock
 from typing import Any, Callable, List, Set, Type
-from wrapt import wrap_function_wrapper, when_imported
+from wrapt import when_imported, resolve_path, apply_patch, FunctionWrapper
 from dataclasses import dataclass
+from collections import namedtuple
 
 from faas_profiler_core.models import OutboundContext, TracingContext
 
 from faas_profiler_python.utilis import Loggable, invoke_instrumented_function
 from faas_profiler_python.core import BasePlugin
 
-IGNORE_PATCH_FLAG = "__ignore_patch"
-ACTIVE_FUNCTION_PATCHERS = dict()
-
 _logger = logging.getLogger("Patchers")
 _logger.setLevel(logging.INFO)
 
 
-@dataclass
-class PatchContext:
-    instance: Any
-    function: Callable
-    args: tuple
-    kwargs: dict
-    response: Any
-    error: Exception
+# @dataclass
+# class PatchContext:
+#     instance: Any
+#     function: Callable
+#     args: tuple
+#     kwargs: dict
+#     response: Any
+#     error: Exception
+
+PatchContext = namedtuple("PatchContext", "instance function args kwargs")
+ReturnContext = namedtuple("ReturnContext", "response error")
 
 
 class FunctionPatcher(BasePlugin, Loggable):
-    patch_on_import: bool = True
     module_name: str = None
     submodules: List[str] = []
     function_name: str = None
-
-    __key__: str = None
-
-    def __new__(cls: type[FunctionPatcher]) -> FunctionPatcher:
-        """
-        Creates new Patcher for given function.
-
-        Makes sure that only one patcher exists for given function in given module.
-        """
-        if cls.module_name is None or cls.function_name is None:
-            raise ValueError(
-                f"Cannot initialize patcher {cls} without module name and function name.")
-
-        cls.__key__ = ".".join([
-            cls.module_name, *cls.submodules, cls.function_name])
-        cls._complete_module_name = ".".join(
-            [cls.module_name, *cls.submodules])
-
-        if any(active_patcher.__key__ ==
-               cls.__key__ for active_patcher in ACTIVE_FUNCTION_PATCHERS):
-            raise ValueError(
-                f"Cannot initialize patcher {cls}. A active patcher for {cls.__key__} already exists.")
-
-        obj = BasePlugin.__new__(cls)
-        ACTIVE_FUNCTION_PATCHERS[cls] = obj
-
-        return obj
 
     def __init__(self) -> None:
         """
@@ -76,12 +47,11 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         super().__init__()
 
-        self._lock = Lock()
         self._active: str = False
         self._patched: bool = False
+        self._original_method = None
 
-        self._tracing_context: Type[TracingContext] = None
-
+        self._data_to_inject: dict = None
         self._registered_observers: Set[Callable] = set()
 
     def __del__(self):
@@ -90,14 +60,6 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         self._deinitialize_patch()
 
-    """
-    Public Interfaces
-    - register_observer
-    - activate
-    - deactivate
-    - set_trace_context_to_inject
-
-    """
 
     def register_observer(self, observe_function: Callable) -> None:
         """
@@ -109,28 +71,21 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         Activates patcher.
         """
-        if self._initialize_patch():
-            self._patched = True
-
+        self._initialize_patch()
         self._active = True
 
     def deactivate(self) -> None:
         """
         Deactivates patcher.
         """
-        if self._deinitialize_patch():
-            self._patched = False
-
+        self._deinitialize_patch()
         self._active = False
 
-    def set_trace_context_to_inject(
-        self,
-        tracing_context: Type[TracingContext]
-    ) -> None:
+    def set_data_to_inject(self, data: dict) -> None:
         """
         Sets the trace context to inject
         """
-        self._tracing_context = tracing_context
+        self._data_to_inject = data
 
     """
     Interfaces for patcher specific logic
@@ -147,17 +102,22 @@ class FunctionPatcher(BasePlugin, Loggable):
         """
         pass
 
-    def extract_outbound_context(self) -> Type[OutboundContext]:
+    def extract_outbound_context(
+        self,
+        patch_context: PatchContext,
+        return_context: ReturnContext
+    ) -> List[Type[OutboundContext]]:
         """
         Extracts Outbound Context from patch context.
 
         Override this method with the patch specific logic.
         """
-        pass
+        return []
 
     def inject_tracing_context(
         self,
-        tracing_context: Type[TracingContext]
+        patch_context: PatchContext,
+        data: dict
     ) -> None:
         """
         Inject tracing context to payload.
@@ -170,172 +130,136 @@ class FunctionPatcher(BasePlugin, Loggable):
     Private methods
     """
 
-    def _initialize_patch(self) -> bool:
+    def _initialize_patch(self) -> None:
         """
         Wraps the function with the patch
         """
         if self._patched:
-            return True
+            return
 
+        parent, attribute, original = resolve_path(self.module_name, self.function_name)
         if self.module_name not in sys.modules:
             self.logger.info(
                 f"Module {self.module_name} not yet imported. Set import hook.")
             when_imported(
                 self.module_name)(
-                lambda *args,
-                **kwargs: self._wrap_function())
+                lambda *args, **kwargs: self._wrap_function(
+                    parent, attribute, original))
         else:
-            self._wrap_function()
+            self._wrap_function(parent, attribute, original)
 
-    def _wrap_function(self) -> None:
+    def _wrap_function(self, parent, attribute, original) -> None:
         """
         Wraps the requsted function with the function wrapper.
-        Executed with lock.
         """
-        with self._lock:
-            try:
-                wrap_function_wrapper(
-                    module=self._complete_module_name,
-                    name=self.function_name,
-                    wrapper=self._function_wrapper)
+        try:
+            wrapper = FunctionWrapper(original, self._function_wrapper)
+            if isinstance(original, FunctionWrapper):
                 self.logger.info(
-                    f"Patchted successfully function {self.function_name} in module {self._complete_module_name}")
+                    f"{self.module_name}.{self.function_name} already instrumented, skipping")
 
-                self._patched = True
-            except Exception as err:
-                self.logger.error(
-                    f"Could not patch function {self.function_name} in module {self._complete_module_name}: {err}")
-                self._patched = False
+            apply_patch(parent, attribute, wrapper)
+            self.logger.info(
+                f"Patchted successfully function {self.function_name}")
 
-    def _deinitialize_patch(self) -> bool:
+            self._original_method = original
+            self._patched = True
+        except Exception as err:
+            self.logger.error(
+                f"Could not patch function {self.function_name}: {err}")
+            self._patched = False
+
+    def _deinitialize_patch(self) -> None:
         """
         Removes the wrapper
         """
         if not self._patched:
-            return True
+            return
 
-        with self._lock:
-            module = importlib.import_module(self._complete_module_name)
-            a, *b = self.function_name.split(".")
-            _function_name = b[0] if b else a
-            _class_name = a if b else None
+        try:
+            parent, attribute, _ = resolve_path(self.module_name, self.function_name)
+            apply_patch(parent, attribute, self._original_method)
 
-            try:
-                if _class_name:
-                    klass = getattr(module, _class_name)
-                    func_wrapper = getattr(klass, _function_name)
-                    setattr(
-                        klass,
-                        self.function_name,
-                        func_wrapper.__wrapped__)
-                else:
-                    func_wrapper = getattr(module, self.function_name)
-                    setattr(
-                        module,
-                        self.function_name,
-                        func_wrapper.__wrapped__)
-
-                self.logger.info(
-                    f"Patch successfully removed for function {self.function_name} in module {self._complete_module_name}")
-                return True
-            except Exception as err:
-                self.logger.error(
-                    f"Removing patch on function {self.function_name} in module {self._complete_module_name} failed: {err}")
-                return False
+            self.logger.info(
+                f"Patch successfully removed for function {self.function_name} in module {self.module_name}")
+            
+            self._patched = False
+        except Exception as err:
+            self.logger.error(
+                f"Removing patch on function {self.function_name} in module {self.module_name} failed: {err}")
 
     def _function_wrapper(
         self,
-        function: Type[Callable],
-        function_instance: Any,
-        function_args: tuple,
-        function_kwargs: dict
+        func: Type[Callable],
+        instance: Any,
+        args: tuple,
+        kwargs: dict
     ) -> Any:
         """
         Wrapper function for the pachted function.
         """
         if not self._active:
-            return function(*function_args, **function_kwargs)
+            return func(*args, **kwargs)
 
-        ignore_patch = bool(
-            getattr(
-                function_instance,
-                IGNORE_PATCH_FLAG,
-                False))
-        if ignore_patch:
-            self.logger.info(
-                f"Ignored call {function} on {function_instance}: {IGNORE_PATCH_FLAG} flag was True.")
-            return function(*function_args, **function_kwargs)
+        patch_context = PatchContext(instance, func, args, kwargs)
 
-        patch_context = PatchContext(
-            function_instance,
-            function,
-            function_args,
-            function_kwargs,
-            error=None,
-            response=None)
-        self.initialize(patch_context)
-
-        self._modify_payload()
+        self._inject_tracing_context(patch_context)
+        breakpoint()
         response, error, _, invoked_at, finished_at = invoke_instrumented_function(
-            function, patch_context.args, patch_context.kwargs)
+            func, patch_context.args, patch_context.kwargs, with_traceback=False)
 
-        patch_context.response = response
-        patch_context.error = error
+        return_context = ReturnContext(response, error)
 
-        outbound_contexts = self._execute_extract_outbound_context()
-        if outbound_contexts:
-            for out_ctx in outbound_contexts:
-                out_ctx.invoked_at = invoked_at
-                out_ctx.finished_at = finished_at
+        try:
+            outbound_contexts = self.extract_outbound_context(patch_context, return_context)
+        except Exception as err:
+            self.logger.error(
+                f"Execution outbound context extraction for patched function "
+                f"{self.function_name} in module {self.module_name} failed: {err}")
+            outbound_contexts = []
 
-                out_ctx.has_error = error is not None
-                out_ctx.error_message = str(error) if error else ""
-
-            self._notify_observers(outbound_contexts)
+        self._notify_observers(outbound_contexts, invoked_at, finished_at)
 
         if error:
             raise error
         else:
-            return patch_context.response
+            return response
 
     def _notify_observers(self,
-                          outbound_contexts: List[Type[OutboundContext]]):
+        outbound_contexts: List[Type[OutboundContext]],
+        invoked_at,
+        finished_at
+    ) -> None:
         """
         Notifies all registered oberservers.
         """
-        for oberserver_function in self._registered_observers:
-            if outbound_contexts is None:
-                continue
+        if not self._registered_observers or len(self._registered_observers) == 0:
+            return
 
-            for outbound_context in outbound_contexts:
-                if outbound_context is None:
-                    continue
+        if not outbound_contexts or len(outbound_contexts) == 0:
+            return
+
+        for out_ctx in outbound_contexts:
+            out_ctx.invoked_at = invoked_at
+            out_ctx.finished_at = finished_at
+
+            for oberserver_function in self._registered_observers:
                 try:
-                    oberserver_function(outbound_context)
+                    oberserver_function(out_ctx)
                 except Exception as err:
                     self.logger.error(
                         f"Notifying {oberserver_function} failed: {err}")
 
-    def _execute_extract_outbound_context(self) -> Any:
-        """
-        Safely executes the extract context hook
-        """
-        try:
-            return self.extract_outbound_context()
-        except Exception as err:
-            self.logger.error(
-                f"Execution outbound context extraction for patched function "
-                f"{self.function_name} in module {self._complete_module_name} failed: {err}")
 
-    def _modify_payload(self) -> None:
+    def _inject_tracing_context(self, patch_context: PatchContext) -> None:
         """
-        Calls the tracer to modify the payload if required.
+        Calls to modify the payload if required.
         """
-        if not self._tracing_context:
+        if not self._data_to_inject:
             return
 
         try:
-            self.inject_tracing_context(self._tracing_context)
+            self.inject_tracing_context(patch_context, self._data_to_inject)
         except Exception as err:
             self._logger.error(
                 f"Injection failed: {err}. Take unmodified parameters.")
@@ -354,22 +278,14 @@ def request_patcher(
 
     Makes sure, that only one patcher exists.
     """
-    global ACTIVE_FUNCTION_PATCHERS
-    if patch_cls in ACTIVE_FUNCTION_PATCHERS:
-        _logger.info(
-            f"Patcher for {patch_cls} already exists. Return cached one.")
-        return ACTIVE_FUNCTION_PATCHERS[patch_cls]
+    # if patch_cls in ACTIVE_FUNCTION_PATCHERS:
+    #     _logger.info(
+    #         f"Patcher for {patch_cls} already exists. Return cached one.")
+    #     return ACTIVE_FUNCTION_PATCHERS[patch_cls]
 
     _logger.info(
         f"Creating new patcher for requested {patch_cls}.")
     patcher = patch_cls()
-    ACTIVE_FUNCTION_PATCHERS[patch_cls] = patcher
+    # ACTIVE_FUNCTION_PATCHERS[patch_cls] = patcher
 
     return patcher
-
-
-def ignore_instance_from_patching(instance: Any) -> None:
-    """
-    Sets a flag to ignore this instance during patching.
-    """
-    setattr(instance, IGNORE_PATCH_FLAG, True)
