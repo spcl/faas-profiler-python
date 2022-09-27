@@ -6,6 +6,7 @@ Module for all GCP specific logic.
 import os
 
 from typing import Tuple, Type
+from datetime import datetime
 
 from faas_profiler_core.models import InboundContext, TracingContext
 from faas_profiler_core.constants import (
@@ -148,6 +149,8 @@ class GCPHTTPRequest(Loggable):
         elif self.service == GCPService.CLOUD_TASKS:
             self.tasks_inbound(inbound_context)
 
+        inbound_context.invoked_at = datetime.now()
+
         return inbound_context
 
     def _payload_tracing_context(self) -> Type[TracingContext]:
@@ -288,6 +291,8 @@ class GCPEventRequest(Loggable):
             self.pubsub_inbound(inbound_context)
         elif self.service == GCPService.STORAGE:
             self.storage_inbound(inbound_context)
+
+        inbound_context.invoked_at = datetime.now()
 
         return inbound_context
 
