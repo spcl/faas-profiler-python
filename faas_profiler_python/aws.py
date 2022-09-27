@@ -4,8 +4,8 @@
 Module for all AWS specific logic.
 """
 import base64
+import io
 import json
-import re
 
 from collections import namedtuple
 from urllib.parse import urlparse
@@ -576,25 +576,6 @@ AWS Outbound
 """
 
 
-# def __init__(
-#     self,
-#     service: AWSService,
-#     operation: AWSOperation,
-#     patch_context: Type[PatchContext]
-# ) -> None:
-#     super().__init__()
-
-#     self.service = service
-#     self.operation = operation
-#     self.patch_context = patch_context
-
-#     self.api_parameters = get_arg_by_key_or_pos(
-#         patch_context.args,
-#         patch_context.kwargs,
-#         pos=1,
-#         kw="api_params",
-#         default={})
-
 def extract_outbound_contexts(
     service: AWSService,
     operation: AWSOperation,
@@ -722,48 +703,55 @@ def s3_outbound(
     """
     S3 Contexts
     """
-    if (operation != AWSOperation.S3_OBJECT_CREATE and
-            operation != AWSOperation.S3_OBJECT_REMOVED):
-        return
-
     api_parameters = aws_api_parameters(patch_context)
 
     bucket_name = api_parameters.get("Bucket")
     key = api_parameters.get("Key")
 
     request_id = aws_request_id(return_context)
-
-    # _body_size, _content_length = None, None
-    # self.logger.info("Extract body...")
-    # if _response:
-    #     if "ContentLength" in _response or "content-length" in _response:
-    #         _content_length = _response.get(
-    #             "content-length") or _response.get("ContentLength")
-    #     elif "ResponseMetadata" in _response:
-    #         req_meta_data = _response["ResponseMetadata"]
-    #         _content_length = req_meta_data.get(
-    #             "content-length") or req_meta_data.get("ContentLength")
-
-    # if "Body" in self.api_parameters:
-    #     _body_size = getattr(self.api_parameters["Body"], "_size", None)
-
-    # if self.operation == AWSOperation.S3_OBJECT_CREATE:
-    #     _size = _body_size if _body_size else _content_length
-    # else:
-    #     _size = _content_length if _content_length else _body_size
-    # self.logger.info("Finished body...")
-    _size = 0
+    size = get_s3_size(patch_context, return_context)
 
     return [OutboundContext(
         provider=Provider.AWS,
         service=AWSService.S3,
         operation=operation,
         trigger_synchronicity=TriggerSynchronicity.ASYNC,
-        tags={"size": _size, **tags},
+        tags={"size": size, **tags},
         identifier={
             "request_id": request_id,
             "bucket_name": bucket_name,
             "object_key": key})]
+
+
+def get_s3_size(
+    patch_context: PatchContext,
+    return_context: ReturnContext,
+) -> float:
+    """
+    Returns the size of the object of a S3 Access
+    """
+    api_parameters = aws_api_parameters(patch_context)
+    response = return_context.response
+
+    if return_context.response:
+        content_length = response.get(
+            "ContentLength", response.get("content-length"))
+        if not content_length:
+            req_meta_data = response.get("ResponseMetadata")
+            content_length = req_meta_data.get(
+                "ContentLength", req_meta_data.get("content-length"))
+
+        if content_length:
+            return content_length
+
+    if "Body" in api_parameters:
+        body = api_parameters["Body"]
+        if isinstance(body, io.BytesIO):
+            return body.getbuffer().nbytes
+        else:
+            return getattr(body, "_size", None)
+
+    return None
 
 
 def dynamodb_outbound(self, tags: dict = {}) -> List[Type[OutboundContext]]:
