@@ -4,6 +4,7 @@
 Function Context resolving
 """
 
+from datetime import datetime
 import os
 from typing import Type
 
@@ -54,12 +55,15 @@ def resolve_function_context() -> Type[FunctionContext]:
     Returns a function context based on the provider
     """
     if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None:
-        return create_aws_lambda_function_context()
+        func_ctx = create_aws_lambda_function_context()
     elif os.environ.get("K_SERVICE") is not None:
-        return create_gcp_function_context()
+        func_ctx = create_gcp_function_context()
     else:
-        return FunctionContext(
+        func_ctx = FunctionContext(
             provider=Provider.UNIDENTIFIED,
             runtime=Runtime.PYTHON,
             function_name="unidentified",
             handler="unidentified")
+
+    func_ctx.invoked_at = datetime.now()
+    return func_ctx
