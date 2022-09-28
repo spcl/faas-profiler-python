@@ -196,7 +196,7 @@ class Config:
         return float(
             self._profiler_settings.get(
                 "measurement_interval",
-                0.01))
+                0.1))
 
     @property
     def include_environment_variables(self) -> bool:

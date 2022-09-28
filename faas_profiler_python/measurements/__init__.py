@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 AVAILABLE_MEASUREMENTS = {
+    "cpu::UsageOverTime": "faas_profiler_python.measurements.cpu.UsageOverTime",
     "cpu::Usage": "faas_profiler_python.measurements.cpu.Usage",
+    "cpu::UsageByCoresOverTime": "faas_profiler_python.measurements.cpu.UsageByCoresOverTime",
+    "cpu::UsageByCores": "faas_profiler_python.measurements.cpu.UsageByCores",
     "disk::IOCounters": "faas_profiler_python.measurements.disk.IOCounters",
     "information::Environment": "faas_profiler_python.measurements.information.Environment",
     "information::OperatingSystem": "faas_profiler_python.measurements.information.OperatingSystem",
