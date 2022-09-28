@@ -133,7 +133,6 @@ class UsageByCoresOverTime(PeriodicMeasurement):
         self._add_measurement()
 
     def deinitialize(self) -> None:
-        del self.process
         del self._result
 
     def results(self) -> dict:
@@ -226,7 +225,6 @@ class UsageByCores(Measurement):
         self._add_measurement()
 
     def deinitialize(self) -> None:
-        del self.process
         del self._result
 
     def results(self) -> dict:

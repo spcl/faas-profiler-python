@@ -6,7 +6,7 @@ Module for memory measurements:
 - Usage
 """
 
-from typing import List
+from typing import List, Tuple
 import psutil
 import sys
 import os
@@ -27,23 +27,25 @@ def get_memory(
     process: psutil.Process,
     include_children: bool = False,
     exclude_child_pids: list = []
-) -> float:
+) -> Tuple[float, float]:
     """
     Get memory RSS of process
     """
     memory_info = process.memory_info()
-    memory = memory_info.rss
+    rss = memory_info.rss
+    vms = memory_info.vms
 
     if include_children:
         try:
             for child_process in process.children(recursive=True):
                 if child_process.pid not in exclude_child_pids:
                     child_memory_info = child_process.memory_info()
-                    memory += child_memory_info.rss
+                    rss += child_memory_info.rss
+                    vms += child_memory_info.vms
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
-    return memory
+    return rss, vms
 
 
 class CodeMap(Loggable):
@@ -225,31 +227,27 @@ class Usage(PeriodicMeasurement):
     ) -> None:
         self.include_children = include_children
 
-        self._baseline: int = 0
-
         self._own_process_id = process_pid
         self._function_pid = function_pid
 
         self._result = MemoryUsage(
-            interval=interval, measuring_points=[])
+            interval=interval, rss=[], vms=[])
 
         try:
             self.process = psutil.Process(self._function_pid)
         except psutil.Error as err:
             self._logger.warn(f"Could not set process: {err}")
 
+        self._rss_baseline, self._vms_baseline = self._get_memory()
+
     def start(self) -> None:
-        self._baseline = self._get_memory()
-        self._result.measuring_points.append(
-            (time.time(), self._get_memory(substract_baseline=self._baseline)))
+        self._add_measurement()
 
     def measure(self):
-        self._result.measuring_points.append(
-            (time.time(), self._get_memory(substract_baseline=self._baseline)))
+        self._add_measurement()
 
     def stop(self) -> None:
-        self._result.measuring_points.append(
-            (time.time(), self._get_memory(substract_baseline=self._baseline)))
+        self._add_measurement()
 
     def deinitialize(self) -> None:
         del self.process
@@ -258,20 +256,34 @@ class Usage(PeriodicMeasurement):
     def results(self) -> dict:
         return self._result.dump()
 
-    def _get_memory(self, substract_baseline: int = 0) -> int:
+    def _add_measurement(self):
+        timestamp = time.time()
+        rss, vms = self._get_memory(substract_baseline=True)
+        self._result.rss.append((timestamp, rss))
+        self._result.vms.append((timestamp, vms))
+
+    def _get_memory(
+        self,
+        substract_baseline: float = False
+    ) -> Tuple[float, float]:
         """
         Returns memory in bytes for given process (and children if required)
         """
         try:
-            memory = get_memory(
+            rss, vms = get_memory(
                 self.process,
                 include_children=self.include_children,
                 exclude_child_pids=[
                     self._own_process_id])
 
-            return memory - substract_baseline
+            if not substract_baseline:
+                return rss, vms
+
+            return (
+                rss - self._rss_baseline,
+                vms - self._vms_baseline)
         except Exception as e:
             self._logger.error(
                 f"Could not get process memory info from {self.process}: {e}")
 
-        return 0
+        return 0.0, 0.0
