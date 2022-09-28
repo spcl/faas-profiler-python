@@ -22,8 +22,8 @@ logger.setLevel(logging.INFO)
 
 AVAILABLE_EXPORTERS = {
     "common::Console": "faas_profiler_python.exporters.common.Console",
-    "common::AWSVisualizerUploader": "faas_profiler_python.exporters.common.AWSVisualizerUploader",
-    "common::GCPVisualizerUploader": "faas_profiler_python.exporters.common.GCPVisualizerUploader"
+    "storage::AWSVisualizerUploader": "faas_profiler_python.exporters.storage.AWSVisualizerUploader",
+    "storage::GCPVisualizerUploader": "faas_profiler_python.exporters.storage.GCPVisualizerUploader"
 }
 
 
