@@ -14,7 +14,7 @@ from os.path import exists, abspath, dirname, isabs, join
 from enum import Enum, auto
 from typing import List, Type
 from collections import namedtuple
-from faas_profiler_python.utilis import get_idx_safely, lowercase_keys
+from faas_profiler_python.utilis import lowercase_keys
 """
 Constants
 """
@@ -69,7 +69,15 @@ TRACING_KEY = "tracing"
 MEASUREMENTS_ENV_KEY = "FP_MEASUREMENTS"
 CAPTURES_ENV_KEY = "FP_CAPTURES"
 EXPORTERS_ENV_KEY = "FP_EXPORTERS"
-TRACING_ENV_KEY = "FP_TRACING"
+
+INTERVAL_ENV_KEY = "FP_PROCESS_INTERVAL"
+INCLUDE_VARS_ENV_KEY = "FP_INCLUDE_VARS"
+INCLUDE_RETURN_ENV_KEY = "FP_INCLUDE_RESPONSE"
+INCLUDE_ARGS_ENV_KEY = "FP_INCLUDE_PAYLOAD"
+
+ENABLE_TRACING_ENV_KEY = "FP_ENABLE_TRACING"
+TRACE_OUTGOING_ENV_KEY = "FP_TRACE_OUTGOING"
+INJECT_RESPONSE_ENV_KEY = "FP_INJECT_RESPONSE"
 
 ENV_PLUGIN_DELIMITER = ","
 ENV_PARAMETER_DELIMITER = "#"
@@ -127,42 +135,28 @@ class Config:
         """
         Loads config by env variables.
         """
-        def _parse_env_plugins(plugin_str: str) -> list:
-            plugins = []
-            if not plugin_str:
-                return plugins
+        measurements = []
+        exporters = []
+        captures = []
 
-            for pl in str(plugin_str).split(cls.ENV_PLUGIN_DELIMITER):
-                name_params = pl.split(cls.ENV_PARAMETER_NAME_DELIMITER)
-                _name = get_idx_safely(name_params, 0)
-                if not _name:
-                    continue
+        if MEASUREMENTS_ENV_KEY in environ:
+            measurements = [{"name": name} for name in environ.get(
+                MEASUREMENTS_ENV_KEY).split(ENV_PLUGIN_DELIMITER)]
 
-                _parameters = {}
-                parameter_string = get_idx_safely(name_params, 1, "")
-                para_list = str(parameter_string).split(
-                    cls.ENV_PARAMETER_DELIMITER)
-                for parameter in para_list:
-                    _parameter = str(parameter).split("=")
-                    _key, _value = get_idx_safely(
-                        _parameter, 0), get_idx_safely(
-                        _parameter, 1)
-                    if _key and _value:
-                        _parameters[_key] = _value
+        if EXPORTERS_ENV_KEY in environ:
+            exporters = [{"name": name} for name in environ.get(
+                EXPORTERS_ENV_KEY).split(ENV_PLUGIN_DELIMITER)]
 
-                plugins.append({
-                    "name": _name,
-                    "parameters": _parameters
-                })
-
-            return plugins
+        if CAPTURES_ENV_KEY in environ:
+            captures = [{"name": name} for name in environ.get(
+                CAPTURES_ENV_KEY).split(ENV_PLUGIN_DELIMITER)]
 
         return cls(
             config={
-                "measurements": _parse_env_plugins(
-                    environ.get(MEASUREMENTS_ENV_KEY)), "captures": _parse_env_plugins(
-                    environ.get(CAPTURES_ENV_KEY)), "exporters": _parse_env_plugins(
-                    environ.get(EXPORTERS_ENV_KEY))})
+                MEASUREMENTS_KEY: measurements,
+                CAPTURES_KEY: captures,
+                EXPORTERS_KEY: exporters,
+            })
 
     def __init__(
         self,
@@ -172,11 +166,13 @@ class Config:
         self.config_file = config_file
         self.config = config
 
-        try:
-            self.config_dir = abspath(dirname(self.config_file))
-        except Exception as err:
-            self.logger.error(f"Could not resolve dir of config file: {err}")
-            self.config_dir = None
+        self.config_dir = None
+        if self.config_file:
+            try:
+                self.config_dir = abspath(dirname(self.config_file))
+            except Exception as err:
+                self.logger.error(
+                    f"Could not resolve dir of config file: {err}")
 
         self._profiler_settings = self.config.get(PROFILER_KEY, {})
         self._function_context_settings = self._profiler_settings.get(
@@ -193,6 +189,9 @@ class Config:
         """
         Returns the interval of the measurement process in seconds
         """
+        if INTERVAL_ENV_KEY in environ:
+            return float(environ.get(INTERVAL_ENV_KEY))
+
         return float(
             self._profiler_settings.get(
                 "measurement_interval",
@@ -203,6 +202,9 @@ class Config:
         """
         Returns True if environment variables should be included
         """
+        if INCLUDE_VARS_ENV_KEY in environ:
+            return bool(environ.get(INCLUDE_VARS_ENV_KEY))
+
         return self._function_context_settings.get(
             "environment_variables", False)
 
@@ -211,6 +213,9 @@ class Config:
         """
         Returns True if response should be included
         """
+        if INCLUDE_RETURN_ENV_KEY in environ:
+            return bool(environ.get(INCLUDE_RETURN_ENV_KEY))
+
         return self._function_context_settings.get("response", False)
 
     @property
@@ -218,6 +223,9 @@ class Config:
         """
         Returns True if payload should be included
         """
+        if INCLUDE_ARGS_ENV_KEY in environ:
+            return bool(environ.get(INCLUDE_ARGS_ENV_KEY))
+
         return self._function_context_settings.get("payload", False)
 
     @property
@@ -232,6 +240,9 @@ class Config:
         """
         Returns True if tracing is enabled.
         """
+        if ENABLE_TRACING_ENV_KEY in environ:
+            return bool(environ.get(ENABLE_TRACING_ENV_KEY))
+
         return self._tracing.get("enabled", False)
 
     @property
@@ -239,6 +250,13 @@ class Config:
         """
         Returns a list of outgoing request types which should be traced.
         """
+        if TRACE_OUTGOING_ENV_KEY in environ:
+            env_trace_outgoing = str(environ.get(TRACE_OUTGOING_ENV_KEY))
+            if env_trace_outgoing == WILDCARD_KEY:
+                return ALL_PATCHERS
+
+            return env_trace_outgoing.split(ENV_PLUGIN_DELIMITER)
+
         trace_out_requests = self._tracing.get(
             "trace_outgoing_requests", [])
         if trace_out_requests == WILDCARD_KEY:
@@ -255,6 +273,9 @@ class Config:
         Returns True if tracer should inject response.
         Experimental: allows tracing of step functions/workflows until another type is found.
         """
+        if INJECT_RESPONSE_ENV_KEY in environ:
+            return bool(environ.get(INJECT_RESPONSE_ENV_KEY))
+
         return self._tracing.get("inject_response", False)
 
     @property
