@@ -33,6 +33,13 @@ def gcp_project() -> str:
     return os.environ.get("GCLOUD_PROJECT", os.environ.get("GCP_PROJECT "))
 
 
+def gcp_region_name() -> str:
+    """
+    Gets GCP region name by Env
+    """
+    return os.environ.get("FUNCTION_REGION")
+
+
 """
 GCP Resouce resolving
 """

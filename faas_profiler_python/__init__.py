@@ -4,7 +4,4 @@
 FaaS-Profiler for python package
 """
 
-import logging
-import sys
-
 from faas_profiler_python.profiler import profile, Profiler  # noqa

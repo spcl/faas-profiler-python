@@ -235,7 +235,7 @@ class Profiler(Loggable):
         """
         Starts all default measurements
         """
-        if not self.default_batch or self.default_batch.has_plugins:
+        if not self.default_batch or not self.default_batch.has_plugins:
             return
 
         self.logger.info(
@@ -282,7 +282,7 @@ class Profiler(Loggable):
         """
         Stops all default measurements
         """
-        if not self.default_batch or self.default_batch.has_plugins:
+        if not self.default_batch or not self.default_batch.has_plugins:
             return
 
         if not self._default_measurements_started:
@@ -299,7 +299,7 @@ class Profiler(Loggable):
         """
         Deinitialize all default measurements.
         """
-        if not self.default_batch or self.default_batch.has_plugins:
+        if not self.default_batch or not self.default_batch.has_plugins:
             return
 
         self.logger.info(
@@ -383,7 +383,7 @@ class Profiler(Loggable):
         """
         Start all capturing.
         """
-        if not self.capture_batch or self.capture_batch.has_plugins:
+        if not self.capture_batch or not self.capture_batch.has_plugins:
             return
 
         self.logger.info(
@@ -397,7 +397,7 @@ class Profiler(Loggable):
         """
         Stops all capturing.
         """
-        if not self.capture_batch or self.capture_batch.has_plugins:
+        if not self.capture_batch or not self.capture_batch.has_plugins:
             return
 
         if not self._captures_started:
