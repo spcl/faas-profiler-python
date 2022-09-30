@@ -72,7 +72,11 @@ class S3Access(Capture):
 class EFSAccess(Capture):
     requested_patch = "open_io"
 
-    def initialize(self, mount_point: str, *args, **kwargs) -> None:
+    def initialize(
+            self,
+            mount_point: str = "/mnt/lambda",
+            *args,
+            **kwargs) -> None:
         super().initialize(*args, **kwargs)
         self.mount_point = mount_point
 
