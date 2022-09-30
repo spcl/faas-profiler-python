@@ -7,7 +7,6 @@ The Profiles class handles all measurements and tracing.
 
 import json
 import os
-import gc
 
 from datetime import datetime
 from typing import List, Type, Callable, Any
@@ -47,9 +46,6 @@ def profile(config_file: str = None):
             profiler = Profiler(config_file=config_file)
 
             function_return = profiler(func, *args, **kwargs)
-
-            del profiler
-            gc.collect()
 
             return function_return
         return profiler_wrapper
@@ -239,7 +235,7 @@ class Profiler(Loggable):
         """
         Starts all default measurements
         """
-        if not self.default_batch:
+        if not self.default_batch or self.default_batch.has_plugins:
             return
 
         self.logger.info(
@@ -286,7 +282,7 @@ class Profiler(Loggable):
         """
         Stops all default measurements
         """
-        if not self.default_batch:
+        if not self.default_batch or self.default_batch.has_plugins:
             return
 
         if not self._default_measurements_started:
@@ -303,7 +299,7 @@ class Profiler(Loggable):
         """
         Deinitialize all default measurements.
         """
-        if not self.default_batch:
+        if not self.default_batch or self.default_batch.has_plugins:
             return
 
         self.logger.info(
@@ -387,7 +383,7 @@ class Profiler(Loggable):
         """
         Start all capturing.
         """
-        if not self.capture_batch:
+        if not self.capture_batch or self.capture_batch.has_plugins:
             return
 
         self.logger.info(
@@ -401,7 +397,7 @@ class Profiler(Loggable):
         """
         Stops all capturing.
         """
-        if not self.capture_batch:
+        if not self.capture_batch or self.capture_batch.has_plugins:
             return
 
         if not self._captures_started:

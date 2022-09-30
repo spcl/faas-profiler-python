@@ -230,15 +230,19 @@ class Usage(PeriodicMeasurement):
         self._own_process_id = process_pid
         self._function_pid = function_pid
 
-        self._result = MemoryUsage(
-            interval=interval, rss=[], vms=[])
-
         try:
             self.process = psutil.Process(self._function_pid)
         except psutil.Error as err:
             self._logger.warn(f"Could not set process: {err}")
 
         self._rss_baseline, self._vms_baseline = self._get_memory()
+
+        self._result = MemoryUsage(
+            rss_baseline=self._rss_baseline,
+            vms_baseline=self._vms_baseline,
+            interval=interval,
+            rss=[],
+            vms=[])
 
     def start(self) -> None:
         self._add_measurement()
@@ -258,7 +262,7 @@ class Usage(PeriodicMeasurement):
 
     def _add_measurement(self):
         timestamp = time.time()
-        rss, vms = self._get_memory(substract_baseline=True)
+        rss, vms = self._get_memory(substract_baseline=False)
         self._result.rss.append((timestamp, rss))
         self._result.vms.append((timestamp, vms))
 
