@@ -64,13 +64,16 @@ def load_all_exporters(exporters: list = []) -> List[LoadedPlugin]:
     return loaded_exporters
 
 
+def json_default(o):
+    return f"<<non-serializable: {type(o).__qualname__}>>"
+
+
 def json_formatter(raw_data: dict) -> str:
-    def default(o): return f"<<non-serializable: {type(o).__qualname__}>>"
     return ujson.dumps(
         raw_data,
         ensure_ascii=False,
         indent=0,
-        default=default
+        default=json_default
     ).encode('utf-8')
 
 

@@ -14,13 +14,13 @@ UNPROCESSED_RECORDS_PREFIX = "unprocessed_records/"
 UNPROCESSED_RECORDS_FORMAT = UNPROCESSED_RECORDS_PREFIX + \
     "{record_id}.json"
 
+s3_client = boto3.client('s3', region_name="eu-central-1")
+
 
 class AWSVisualizerUploader(Exporter):
     """
     Uploads record to visualizer bucket in S3.
     """
-
-    client = boto3.client('s3', region_name="eu-central-1")
 
     def __init__(
         self,
@@ -41,7 +41,7 @@ class AWSVisualizerUploader(Exporter):
             record_id=record_id)
         record_json = json_formatter(trace_record)
 
-        self.client.put_object(
+        s3_client.put_object(
             Bucket=self.bucket_name,
             Key=record_key,
             Body=record_json)
