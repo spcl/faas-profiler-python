@@ -1,0 +1,18 @@
+# --- General packages ---
+
+## FaaS-Profiler-Core
+faas_profiler_core @ git+https://github.com/spcl/faas-profiler-core
+
+## Package to parse ymal
+pyyaml
+
+## Packge for monkey patching support
+wrapt
+
+# --- Measurements packages --
+psutil
+ntplib
+# python_papi
+
+requests
+ujson
